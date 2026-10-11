@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: fx-socials-web
+    runtime: static
+    plan: free
+    repo: https://github.com/fxsocial01/Fx-Socials-Frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://fx-socials-api.onrender.com
+
+  - type: web
+    name: fx-socials-api
+    runtime: node
+    plan: free
+    repo: https://github.com/fxsocial01/Fx-Socials-Backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fx-socials-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        generateValue: true
+      - key: ADMIN_EMAIL
+        value: yasiyrshehu@gmail.com
+      - key: ADMIN_BOOTSTRAP_PASSWORD
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: FRONTEND_URL
+        value: https://fx-socials-web.onrender.com
+
+databases:
+  - name: fx-socials-db
+    plan: free
+    region: oregon
+    postgresMajorVersion: "18"
+    diskSizeGB: 1
