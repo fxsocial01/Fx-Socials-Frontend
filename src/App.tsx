@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 const API_BASE=(import.meta as any).env.VITE_API_BASE_URL||'https://fx-socials-api.onrender.com';
 const ADMIN='yasiyrshehu@gmail.com';
 const WHATSAPP='https://wa.me/2349072978807';
-const COMMUNITY='https://chat.whatsapp.com/Hg68AV9KmPf6NVYRNMQZoG';
+const COMMUNITY='https://chat.whatsapp.com/GhyWGZaz2Z7Ex9VIxov4RV';
 const platforms=['Instagram','TikTok','YouTube','Facebook','X'];
 const money=(n:number)=>`₦${Number(n||0).toLocaleString('en-NG')}`;
 const token=()=>localStorage.getItem('fxs-session')||'';
