@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import './index.css';
 import './admin-tools';
+import './payment-fix';
 
 // Render serves the live site from fx-socials-site.onrender.com.
 // Do not redirect to an unverified custom domain during app startup.
