@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import pg from 'pg';
 import crypto from 'crypto';
+import { registerMarketplaceRoutes } from './services/marketplace-routes.js';
 const {Pool}=pg;
 const app=express();
 const PORT=Number(process.env.PORT||10000);
@@ -15,7 +16,7 @@ const GAMES=['Free Fire','PUBG Mobile','Fortnite','Roblox','EA FC','FIFA','Call 
 if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required');
 if(!process.env.JWT_SECRET)throw new Error('JWT_SECRET is required');
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL.includes('render.com')?{rejectUnauthorized:false}:undefined});
-app.use(cors({origin:true}));app.use(express.json());
+app.use(cors({origin:true}));app.use(express.json({verify:(req,_res,buf)=>{req.rawBody=buf.toString('utf8')}}));
 const q=(s,p=[])=>pool.query(s,p),kobo=n=>Math.round(Number(n)*100),naira=k=>Number(k||0)/100;
 const token=u=>jwt.sign({id:u.id,email:u.email,role:u.role},process.env.JWT_SECRET,{expiresIn:'7d'});
 function auth(req,res,next){try{const t=String(req.body?.sessionToken||req.headers.authorization||'').replace(/^Bearer\s+/i,'').trim();req.user=jwt.verify(t,process.env.JWT_SECRET);next()}catch{res.status(401).json({error:'Unauthorized'})}}
@@ -56,5 +57,6 @@ app.post('/api/admin/users',auth,admin,async(req,res)=>{const r=await q('SELECT 
 app.post('/api/admin/products/delete',auth,admin,async(req,res)=>{await q("UPDATE products SET status='removed' WHERE id=$1",[req.body?.productId]);res.json({ok:true})});
 app.post('/api/admin/users/add-funds',auth,admin,async(req,res)=>{const a=kobo(req.body?.amountNaira);await q('UPDATE users SET balance_kobo=balance_kobo+$1 WHERE id=$2',[a,req.body?.userId]);await q('INSERT INTO wallet_audit(admin_id,user_id,amount_kobo,type,reason) VALUES($1,$2,$3,$4,$5)',[req.user.id,req.body?.userId,a,'add_funds','Admin wallet adjustment']);res.json({ok:true})});
 app.post('/api/admin/users/refund',auth,admin,async(req,res)=>{const a=kobo(req.body?.amountNaira);await q('UPDATE users SET balance_kobo=balance_kobo+$1 WHERE id=$2',[a,req.body?.userId]);await q('INSERT INTO wallet_audit(admin_id,user_id,amount_kobo,type,reason) VALUES($1,$2,$3,$4,$5)',[req.user.id,req.body?.userId,a,'refund','Admin refund']);res.json({ok:true})});
+registerMarketplaceRoutes({app,pool,auth,admin});
 app.listen(PORT,'0.0.0.0',()=>console.log(`Fx Socials API listening on ${PORT}`));
 init().catch(e=>{console.error(e);process.exit(1)});
