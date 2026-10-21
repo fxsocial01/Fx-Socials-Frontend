@@ -1,249 +1,27 @@
 import crypto from 'crypto';
-import { getMarketplaceProvider, marketplaceConfig } from './marketplace-config.js';
-
-const moneyKobo = (n) => Math.round(Number(n) * 100);
-const timingSafe = (a, b) => {
-  const aa = Buffer.from(String(a || ''));
-  const bb = Buffer.from(String(b || ''));
-  return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
-};
-
-async function socioRequest(path, options = {}) {
-  const base = (marketplaceConfig.sms.baseUrl || 'https://sociosms.com/api/public/v1').replace(/\/$/, '');
-  const response = await fetch(`${base}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${marketplaceConfig.sms.apiKey}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
-    }
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = body?.error?.message || body?.message || `SocioSMS request failed (${response.status})`;
-    const error = new Error(message);
-    error.status = response.status;
-    error.providerBody = body;
-    throw error;
-  }
-  return body;
-}
-
-async function fulfillSmsRental(order, q) {
-  if (order.category !== 'sms') return { status: order.status, providerOrderId: order.provider_order_id };
-  if (order.provider_order_id) return { status: order.status, providerOrderId: order.provider_order_id };
-  if (!marketplaceConfig.sms.apiKey) throw new Error('SMS provider is not configured');
-
-  const product = await q('SELECT * FROM marketplace_products WHERE id=$1', [order.product_id]);
-  if (!product.rowCount) throw new Error('Marketplace product not found');
-  const p = product.rows[0];
-  const metadata = p.metadata || {};
-  const request = {
-    service: p.service_code,
-    ...(p.country_code ? { country: p.country_code } : {}),
-    ...(metadata.server ? { server: metadata.server } : {}),
-    ...(metadata.strategy ? { strategy: metadata.strategy } : {}),
-    ...(metadata.maxPriceNgn ? { max_price_ngn: Number(metadata.maxPriceNgn) } : {}),
-    ...(metadata.autoCancelAfter ? { auto_cancel_after: Number(metadata.autoCancelAfter) } : {})
-  };
-
-  await q("UPDATE marketplace_orders SET status='fulfilling',updated_at=now() WHERE id=$1 AND status IN ('paid','fulfillment_pending','failed')", [order.id]);
-  const result = await socioRequest('/rentals', { method: 'POST', body: JSON.stringify(request) });
-  const rental = result?.rental;
-  if (!rental?.id) throw new Error('SMS provider did not return a rental');
-
-  await q(`UPDATE marketplace_orders SET provider_order_id=$1,status='active',provider_payload=$2,updated_at=now() WHERE id=$3`, [rental.id, rental, order.id]);
-  return { status: 'active', providerOrderId: rental.id, rental };
-}
-
-async function syncSmsRental(order, q) {
-  if (order.category !== 'sms' || !order.provider_order_id || !marketplaceConfig.sms.apiKey) return null;
-  const result = await socioRequest(`/rentals/${encodeURIComponent(order.provider_order_id)}`);
-  const rental = result?.rental;
-  if (!rental) return null;
-  const nextStatus = rental.status === 'received' ? 'completed' : rental.status === 'expired' || rental.status === 'cancelled' ? 'refunded' : order.status;
-  await q(`UPDATE marketplace_orders SET status=$1,provider_payload=$2,updated_at=now() WHERE id=$3`, [nextStatus, rental, order.id]);
-  return rental;
-}
-
-export function registerMarketplaceRoutes({ app, pool, auth, admin }) {
-  const q = (text, params = []) => pool.query(text, params);
-  const ensureSchema = async () => {
-    await q(`CREATE TABLE IF NOT EXISTS marketplace_products (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), category TEXT NOT NULL CHECK(category IN ('esim','sms')), provider TEXT NOT NULL, provider_product_id TEXT, country_code TEXT, service_code TEXT, name TEXT NOT NULL, description TEXT, provider_cost_kobo BIGINT NOT NULL DEFAULT 0, sale_price_kobo BIGINT NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'NGN', status TEXT NOT NULL DEFAULT 'active', metadata JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
-      CREATE TABLE IF NOT EXISTS marketplace_orders (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), product_id UUID NOT NULL REFERENCES marketplace_products(id), paystack_reference TEXT UNIQUE, provider_order_id TEXT, provider TEXT NOT NULL, category TEXT NOT NULL, amount_kobo BIGINT NOT NULL, provider_cost_kobo BIGINT, gross_margin_kobo BIGINT, status TEXT NOT NULL DEFAULT 'pending_payment', customer_payload JSONB NOT NULL DEFAULT '{}'::jsonb, provider_payload JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
-      CREATE TABLE IF NOT EXISTS marketplace_events (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_id UUID REFERENCES marketplace_orders(id), provider TEXT NOT NULL, event_type TEXT NOT NULL, external_event_id TEXT, payload JSONB NOT NULL DEFAULT '{}'::jsonb, received_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(provider, external_event_id));
-      ALTER TABLE marketplace_orders ADD COLUMN IF NOT EXISTS provider_order_id TEXT;
-    `);
-  };
-
-  app.get('/api/marketplace/catalog', async (req, res) => {
-    try {
-      await ensureSchema();
-      const params = []; const where = ["status='active'"];
-      if (req.query.category) { params.push(String(req.query.category).toLowerCase()); where.push(`category=$${params.length}`); }
-      if (req.query.country) { params.push(String(req.query.country).toUpperCase()); where.push(`country_code=$${params.length}`); }
-      if (req.query.service) { params.push(String(req.query.service)); where.push(`service_code=$${params.length}`); }
-      const r = await q(`SELECT id,category,provider,provider_product_id,country_code,service_code,name,description,provider_cost_kobo,sale_price_kobo,currency,metadata FROM marketplace_products WHERE ${where.join(' AND ')} ORDER BY category,country_code,name`, params);
-      res.json({ products: r.rows.map(p => ({ ...p, providerCost: Number(p.provider_cost_kobo) / 100, price: Number(p.sale_price_kobo) / 100, grossMargin: (Number(p.sale_price_kobo) - Number(p.provider_cost_kobo)) / 100 })) });
-    } catch { res.status(500).json({ error: 'Could not load marketplace catalog' }); }
-  });
-
-  app.get('/api/marketplace/orders', auth, async (req, res) => {
-    try {
-      await ensureSchema();
-      const r = await q('SELECT id,category,provider,paystack_reference,provider_order_id,amount_kobo,provider_cost_kobo,gross_margin_kobo,status,provider_payload,created_at,updated_at FROM marketplace_orders WHERE user_id=$1 ORDER BY created_at DESC', [req.user.id]);
-      const orders = [];
-      for (const o of r.rows) {
-        let providerPayload = o.provider_payload || {};
-        if (o.category === 'sms' && o.provider_order_id && ['active', 'fulfilling'].includes(o.status)) {
-          try { const rental = await syncSmsRental(o, q); if (rental) { providerPayload = rental; o.status = rental.status === 'received' ? 'completed' : rental.status === 'expired' || rental.status === 'cancelled' ? 'refunded' : o.status; } } catch {}
-        }
-        orders.push({ ...o, providerPayload, amount: Number(o.amount_kobo) / 100, providerCost: Number(o.provider_cost_kobo || 0) / 100, grossMargin: Number(o.gross_margin_kobo || 0) / 100 });
-      }
-      res.json({ orders });
-    } catch (e) { res.status(500).json({ error: e.message || 'Could not load marketplace orders' }); }
-  });
-
-  app.get('/api/marketplace/orders/:id', auth, async (req, res) => {
-    try {
-      await ensureSchema();
-      const r = await q('SELECT * FROM marketplace_orders WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]);
-      if (!r.rowCount) return res.status(404).json({ error: 'Order not found' });
-      const order = r.rows[0];
-      if (order.category === 'sms' && order.provider_order_id) {
-        try { const rental = await syncSmsRental(order, q); if (rental) order.provider_payload = rental; } catch {}
-      }
-      res.json({ order: { ...order, amount: Number(order.amount_kobo) / 100, providerCost: Number(order.provider_cost_kobo || 0) / 100, grossMargin: Number(order.gross_margin_kobo || 0) / 100 } });
-    } catch (e) { res.status(500).json({ error: e.message || 'Could not load order' }); }
-  });
-
-  app.post('/api/marketplace/orders/initialize', auth, async (req, res) => {
-    try {
-      await ensureSchema();
-      const r = await q("SELECT * FROM marketplace_products WHERE id=$1 AND status='active'", [req.body.productId]);
-      if (!r.rowCount) return res.status(404).json({ error: 'Marketplace product not found' });
-      const p = r.rows[0];
-      const reference = `FXMKT-${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
-      const order = await q(`INSERT INTO marketplace_orders(user_id,product_id,paystack_reference,provider,category,amount_kobo,provider_cost_kobo,gross_margin_kobo,status,customer_payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending_payment',$9) RETURNING id`, [req.user.id, p.id, reference, p.provider, p.category, p.sale_price_kobo, p.provider_cost_kobo, Number(p.sale_price_kobo) - Number(p.provider_cost_kobo), req.body.customer || {}]);
-      const pay = await fetch('https://api.paystack.co/transaction/initialize', { method: 'POST', headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: req.user.email, amount: Number(p.sale_price_kobo), reference, callback_url: `${process.env.FRONTEND_URL || ''}/#/marketplace` }) });
-      const data = await pay.json();
-      if (!data.status) return res.status(502).json({ error: data.message || 'Paystack initialization failed' });
-      res.json({ ok: true, orderId: order.rows[0].id, reference, authorizationUrl: data.data.authorization_url, amount: Number(p.sale_price_kobo) / 100 });
-    } catch (e) { res.status(500).json({ error: e.message || 'Could not initialize payment' }); }
-  });
-
-  const fulfillPaidOrder = async (orderId) => {
-    const found = await q('SELECT * FROM marketplace_orders WHERE id=$1', [orderId]);
-    if (!found.rowCount) throw new Error('Marketplace order not found');
-    let order = found.rows[0];
-    if (order.status === 'pending_payment') await q("UPDATE marketplace_orders SET status='paid',updated_at=now() WHERE id=$1", [order.id]);
-    order = (await q('SELECT * FROM marketplace_orders WHERE id=$1', [order.id])).rows[0];
-    if (order.category === 'sms') return fulfillSmsRental(order, q);
-    return { status: order.status };
-  };
-
-  app.post('/api/marketplace/orders/verify', auth, async (req, res) => {
-    try {
-      const reference = String(req.body.reference || '');
-      const found = await q('SELECT * FROM marketplace_orders WHERE paystack_reference=$1 AND user_id=$2', [reference, req.user.id]);
-      if (!found.rowCount) return res.status(404).json({ error: 'Order reference not found' });
-      const order = found.rows[0];
-      const response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } });
-      const data = await response.json();
-      if (!data.status || data.data?.status !== 'success') return res.status(400).json({ error: 'Payment is not verified yet' });
-      if (Number(data.data.amount) !== Number(order.amount_kobo)) return res.status(400).json({ error: 'Verified amount does not match order amount' });
-      await q("UPDATE marketplace_orders SET status=CASE WHEN status='pending_payment' THEN 'paid' ELSE status END,customer_payload=$1,updated_at=now() WHERE id=$2", [data.data, order.id]);
-      const fulfillment = await fulfillPaidOrder(order.id);
-      res.json({ ok: true, orderId: order.id, status: fulfillment.status, providerOrderId: fulfillment.providerOrderId || null, rental: fulfillment.rental || null });
-    } catch (e) { res.status(e.status === 402 ? 502 : 500).json({ error: e.message || 'Payment verification or fulfillment failed' }); }
-  });
-
-  app.post('/api/marketplace/orders/:id/cancel', auth, async (req, res) => {
-    try {
-      const found = await q('SELECT * FROM marketplace_orders WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]);
-      if (!found.rowCount) return res.status(404).json({ error: 'Order not found' });
-      const order = found.rows[0];
-      if (order.category !== 'sms' || !order.provider_order_id) return res.status(400).json({ error: 'This order cannot be cancelled here' });
-      const result = await socioRequest(`/rentals/${encodeURIComponent(order.provider_order_id)}/cancel`, { method: 'POST' });
-      const refunded = Number(result.refunded_ngn || 0);
-      await q("UPDATE marketplace_orders SET status='refunded',provider_payload=$1,updated_at=now() WHERE id=$2", [result, order.id]);
-      res.json({ ok: true, refunded: refunded, message: 'Rental cancelled and provider refund confirmed.' });
-    } catch (e) { res.status(e.status === 409 ? 409 : 502).json({ error: e.message || 'Could not cancel rental' }); }
-  });
-
-  app.post('/api/marketplace/orders/:id/finish', auth, async (req, res) => {
-    try {
-      const found = await q('SELECT * FROM marketplace_orders WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]);
-      if (!found.rowCount) return res.status(404).json({ error: 'Order not found' });
-      const order = found.rows[0];
-      if (order.category !== 'sms' || !order.provider_order_id) return res.status(400).json({ error: 'This order cannot be completed here' });
-      await socioRequest(`/rentals/${encodeURIComponent(order.provider_order_id)}/finish`, { method: 'POST' });
-      await q("UPDATE marketplace_orders SET status='completed',updated_at=now() WHERE id=$1", [order.id]);
-      res.json({ ok: true });
-    } catch (e) { res.status(502).json({ error: e.message || 'Could not complete rental' }); }
-  });
-
-  app.post('/api/marketplace/webhooks/paystack', async (req, res) => {
-    const signature = req.headers['x-paystack-signature'];
-    const raw = req.rawBody || JSON.stringify(req.body);
-    if (!signature || !process.env.PAYSTACK_SECRET_KEY) return res.status(401).json({ error: 'Webhook authentication unavailable' });
-    const expected = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY).update(raw).digest('hex');
-    if (!timingSafe(signature, expected)) return res.status(401).json({ error: 'Invalid webhook signature' });
-    try {
-      if (req.body?.event === 'charge.success' && req.body?.data?.reference) {
-        const found = await q('SELECT * FROM marketplace_orders WHERE paystack_reference=$1', [req.body.data.reference]);
-        if (found.rowCount) {
-          const order = found.rows[0];
-          if (Number(req.body.data.amount) === Number(order.amount_kobo)) {
-            await q("UPDATE marketplace_orders SET status=CASE WHEN status='pending_payment' THEN 'paid' ELSE status END,customer_payload=$1,updated_at=now() WHERE id=$2", [req.body.data, order.id]);
-            try { await fulfillPaidOrder(order.id); } catch (e) { await q("UPDATE marketplace_orders SET status='failed',provider_payload=$1,updated_at=now() WHERE id=$2", [{ error: e.message }, order.id]); }
-          }
-        }
-      }
-      res.json({ received: true });
-    } catch { res.status(500).json({ error: 'Could not process Paystack webhook' }); }
-  });
-
-  app.post('/api/marketplace/webhooks/provider', async (req, res) => {
-    try {
-      await ensureSchema();
-      const signature = String(req.headers['x-sociosms-signature'] || '');
-      const secret = marketplaceConfig.sms.webhookSecret;
-      if (secret) {
-        const raw = req.rawBody || JSON.stringify(req.body);
-        const expected = `sha256=${crypto.createHmac('sha256', secret).update(raw).digest('hex')}`;
-        if (!timingSafe(signature, expected)) return res.status(401).json({ error: 'Invalid provider signature' });
-      }
-      const rental = req.body?.rental || {};
-      const providerId = String(rental.id || '');
-      const eventType = String(req.headers['x-sociosms-event'] || req.body?.event || 'provider.webhook');
-      const eventId = providerId ? `${eventType}:${providerId}` : crypto.createHash('sha256').update(req.rawBody || JSON.stringify(req.body)).digest('hex');
-      const provider = getMarketplaceProvider('sms');
-      const order = providerId ? await q('SELECT * FROM marketplace_orders WHERE provider_order_id=$1', [providerId]) : { rowCount: 0 };
-      const orderId = order.rowCount ? order.rows[0].id : null;
-      await q('INSERT INTO marketplace_events(order_id,provider,event_type,external_event_id,payload) VALUES($1,$2,$3,$4,$5) ON CONFLICT(provider,external_event_id) DO NOTHING', [orderId, provider.name, eventType, eventId, req.body]);
-      if (order.rowCount) {
-        const next = eventType === 'rental.code_received' ? 'completed' : eventType === 'rental.expired_refunded' || eventType === 'rental.cancelled' || rental.status === 'expired' || rental.status === 'cancelled' ? 'refunded' : 'active';
-        await q('UPDATE marketplace_orders SET status=$1,provider_payload=$2,updated_at=now() WHERE id=$3', [next, rental, order.rows[0].id]);
-      }
-      res.json({ received: true });
-    } catch (e) { res.status(500).json({ error: e.message || 'Could not process provider webhook' }); }
-  });
-
-  app.post('/api/admin/marketplace/products', auth, admin, async (req, res) => {
-    try {
-      await ensureSchema();
-      const { category, provider, providerProductId, countryCode, serviceCode, name, description, providerCostNaira, salePriceNaira, metadata = {} } = req.body;
-      const cost = Number(providerCostNaira), sale = Number(salePriceNaira);
-      if (!['esim', 'sms'].includes(category) || !provider || !name || !Number.isFinite(cost) || !Number.isFinite(sale) || sale < cost) return res.status(400).json({ error: 'Invalid marketplace product or pricing' });
-      const r = await q(`INSERT INTO marketplace_products(category,provider,provider_product_id,country_code,service_code,name,description,provider_cost_kobo,sale_price_kobo,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, [category, provider, providerProductId || null, countryCode ? String(countryCode).toUpperCase() : null, serviceCode || null, name, description || null, moneyKobo(cost), moneyKobo(sale), metadata]);
-      res.json({ ok: true, id: r.rows[0].id, providerCost: cost, price: sale, grossMargin: sale - cost });
-    } catch (e) { res.status(400).json({ error: e.message || 'Could not create product' }); }
-  });
-
-  app.get('/api/marketplace/provider-status', auth, admin, async (req, res) => {
-    const out = {};
-    for (const category of ['esim', 'sms']) { const p = getMarketplaceProvider(category); out[category] = { provider: p.name, configured: p.configured() }; }
-    res.json(out);
-  });
+import { marketplaceConfig } from './marketplace-config.js';
+const moneyKobo=n=>Math.round(Number(n)*100);
+const timingSafe=(a,b)=>{const x=Buffer.from(String(a||'')),y=Buffer.from(String(b||''));return x.length===y.length&&crypto.timingSafeEqual(x,y)};
+async function socio(path,options={}){if(!marketplaceConfig.sms.apiKey)throw new Error('SMS provider is not configured');const base=(marketplaceConfig.sms.baseUrl||'https://sociosms.com/api/public/v1').replace(/\/$/,'');const r=await fetch(base+path,{...options,headers:{Authorization:`Bearer ${marketplaceConfig.sms.apiKey}`,Accept:'application/json','Content-Type':'application/json',...(options.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(d?.error?.message||d?.message||`SMS provider request failed (${r.status})`),{status:r.status});return d}
+export function registerMarketplaceRoutes({app,pool,auth,admin}){
+ const q=(s,p=[])=>pool.query(s,p);
+ const schema=async()=>q(`CREATE TABLE IF NOT EXISTS marketplace_products(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),category TEXT NOT NULL CHECK(category IN ('esim','sms')),provider TEXT NOT NULL,provider_product_id TEXT,country_code TEXT,service_code TEXT,name TEXT NOT NULL,description TEXT,provider_cost_kobo BIGINT NOT NULL DEFAULT 0,sale_price_kobo BIGINT NOT NULL DEFAULT 0,currency TEXT NOT NULL DEFAULT 'NGN',status TEXT NOT NULL DEFAULT 'active',metadata JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE TABLE IF NOT EXISTS marketplace_orders(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),user_id UUID NOT NULL REFERENCES users(id),product_id UUID NOT NULL REFERENCES marketplace_products(id),paystack_reference TEXT UNIQUE,provider_order_id TEXT,provider TEXT NOT NULL,category TEXT NOT NULL,amount_kobo BIGINT NOT NULL,provider_cost_kobo BIGINT,gross_margin_kobo BIGINT,status TEXT NOT NULL DEFAULT 'pending_payment',customer_payload JSONB NOT NULL DEFAULT '{}'::jsonb,provider_payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now());CREATE TABLE IF NOT EXISTS marketplace_events(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),order_id UUID REFERENCES marketplace_orders(id),provider TEXT NOT NULL,event_type TEXT NOT NULL,external_event_id TEXT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,received_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(provider,external_event_id));`);
+ const sync=async(order)=>{if(order.category!=='sms'||!order.provider_order_id)return null;const d=await socio(`/rentals/${encodeURIComponent(order.provider_order_id)}`),r=d.rental;if(!r)return null;const st=r.status==='received'?'completed':r.status==='expired'||r.status==='cancelled'?'refunded':order.status;await q('UPDATE marketplace_orders SET status=$1,provider_payload=$2,updated_at=now() WHERE id=$3',[st,r,order.id]);return r};
+ const fulfill=async(id)=>{let o=(await q('SELECT * FROM marketplace_orders WHERE id=$1',[id])).rows[0];if(!o)throw Error('Marketplace order not found');if(o.status==='pending_payment')await q("UPDATE marketplace_orders SET status='paid',updated_at=now() WHERE id=$1",[id]);o=(await q('SELECT * FROM marketplace_orders WHERE id=$1',[id])).rows[0];if(o.category!=='sms')return{status:o.status};const p=(await q('SELECT * FROM marketplace_products WHERE id=$1',[o.product_id])).rows[0];if(!p)throw Error('Marketplace product not found');if(o.provider_order_id)return{status:o.status,providerOrderId:o.provider_order_id};const m=p.metadata||{},body={service:p.service_code,...(p.country_code?{country:p.country_code}:{}),...(m.server?{server:m.server}:{}),...(m.strategy?{strategy:m.strategy}:{}),...(m.maxPriceNgn?{max_price_ngn:Number(m.maxPriceNgn)}:{}),...(m.autoCancelAfter?{auto_cancel_after:Number(m.autoCancelAfter)}:{})};await q("UPDATE marketplace_orders SET status='fulfilling',updated_at=now() WHERE id=$1",[id]);const d=await socio('/rentals',{method:'POST',body:JSON.stringify(body)}),r=d.rental;if(!r?.id)throw Error('SMS provider did not return a rental');await q("UPDATE marketplace_orders SET provider_order_id=$1,status='active',provider_payload=$2,updated_at=now() WHERE id=$3",[r.id,r,id]);return{status:'active',providerOrderId:r.id,rental:r};};
+ app.get('/api/marketplace/live/sms/services',async(_req,res)=>{try{const d=await socio('/services');res.json({services:d.services||[]})}catch(e){res.status(502).json({error:e.message||'Could not load SMS services'})}});
+ app.get('/api/marketplace/live/sms/countries',async(req,res)=>{try{const s=String(req.query.service||'').trim();if(!s)return res.status(400).json({error:'Choose a social service first'});const d=await socio(`/countries?service=${encodeURIComponent(s)}`);res.json({countries:d.countries||[]})}catch(e){res.status(502).json({error:e.message||'Could not load countries'})}});
+ app.get('/api/marketplace/live/sms/prices',async(req,res)=>{try{const s=String(req.query.service||'').trim(),c=String(req.query.country||'').trim().toUpperCase();if(!s||!c)return res.status(400).json({error:'Choose a service and country first'});const d=await socio(`/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(c)}`),markup=Number(process.env.SMS_RENTAL_MARKUP_NGN||500);res.json({servers:(d.servers||[]).map(x=>({...x,providerPrice:Number(x.price_ngn||0),salePrice:Math.round((Number(x.price_ngn||0)+markup)*100)/100})),markup})}catch(e){res.status(502).json({error:e.message||'Could not load SMS prices'})}});
+ app.post('/api/marketplace/live/sms/prepare',auth,async(req,res)=>{try{await schema();const s=String(req.body.service||'').trim(),c=String(req.body.country||'').trim().toUpperCase(),server=String(req.body.server||'').trim().toUpperCase();if(!s||!c||!server)return res.status(400).json({error:'Choose service, country and number option'});const d=await socio(`/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(c)}`),x=(d.servers||[]).find(v=>String(v.server||'').toUpperCase()===server&&Number(v.stock||0)>0);if(!x)return res.status(409).json({error:'That number option is out of stock. Choose another option.'});const markup=Number(process.env.SMS_RENTAL_MARKUP_NGN||500),cost=Number(x.price_ngn||0),sale=cost+markup,pid=`sociosms:${s}:${c}:${server}`,meta={server,strategy:'best',autoCancelAfter:Number(process.env.SMS_AUTO_CANCEL_AFTER||120)};let r=await q('SELECT id FROM marketplace_products WHERE provider_product_id=$1 LIMIT 1',[pid]);let id=r.rows[0]?.id;if(!id){r=await q(`INSERT INTO marketplace_products(category,provider,provider_product_id,country_code,service_code,name,description,provider_cost_kobo,sale_price_kobo,currency,status,metadata) VALUES('sms',$1,$2,$3,$4,$5,$6,$7,$8,'NGN','active',$9::jsonb) RETURNING id`,[marketplaceConfig.sms.provider||'sociosms',pid,c,s,`${x.country_name||c} · ${s}`,`Live ${s} SMS rental for ${x.country_name||c}.`,moneyKobo(cost),moneyKobo(sale),JSON.stringify(meta)]);id=r.rows[0]?.id}if(!id)throw Error('Could not prepare the SMS rental');res.json({productId:id,price:sale,providerPrice:cost,country:c,countryName:x.country_name||c,server,stock:Number(x.stock||0)})}catch(e){res.status(502).json({error:e.message||'Could not prepare SMS rental'})}});
+ app.get('/api/marketplace/live/esim/catalog',async(req,res)=>{try{await schema();const c=String(req.query.country||'').trim().toUpperCase(),p=[],w=["category='esim'","status='active'"];if(c){p.push(c);w.push(`country_code=$${p.length}`)}const r=await q(`SELECT id,country_code,name,description,sale_price_kobo,currency,metadata FROM marketplace_products WHERE ${w.join(' AND ')} ORDER BY country_code,name`,p);res.json({configured:Boolean(marketplaceConfig.esim.apiKey&&marketplaceConfig.esim.baseUrl),products:r.rows.map(x=>({...x,price:Number(x.sale_price_kobo)/100}))})}catch(e){res.status(500).json({error:e.message||'Could not load eSIM catalog'})}});
+ app.post('/api/marketplace/live/esim/products',auth,admin,async(req,res)=>{try{await schema();const{country,name,description,price,provider,providerProductId,metadata}=req.body;if(!country||!name||!Number.isFinite(Number(price))||Number(price)<1)return res.status(400).json({error:'Country, name and price are required'});const r=await q(`INSERT INTO marketplace_products(category,provider,provider_product_id,country_code,name,description,sale_price_kobo,currency,status,metadata) VALUES('esim',$1,$2,$3,$4,$5,$6,'NGN','active',$7::jsonb) RETURNING id`,[provider||marketplaceConfig.esim.provider||'esim-provider',providerProductId||null,String(country).toUpperCase(),name,description||null,moneyKobo(price),JSON.stringify(metadata||{})]);res.json({ok:true,id:r.rows[0].id})}catch(e){res.status(400).json({error:e.message||'Could not add eSIM product'})}});
+ app.get('/api/marketplace/catalog',async(req,res)=>{try{await schema();const p=[],w=["status='active'"];if(req.query.category){p.push(String(req.query.category).toLowerCase());w.push(`category=$${p.length}`)}if(req.query.country){p.push(String(req.query.country).toUpperCase());w.push(`country_code=$${p.length}`)}if(req.query.service){p.push(String(req.query.service));w.push(`service_code=$${p.length}`)}const r=await q(`SELECT id,category,provider,provider_product_id,country_code,service_code,name,description,provider_cost_kobo,sale_price_kobo,currency,metadata FROM marketplace_products WHERE ${w.join(' AND ')} ORDER BY category,country_code,name`,p);res.json({products:r.rows.map(x=>({...x,providerCost:Number(x.provider_cost_kobo)/100,price:Number(x.sale_price_kobo)/100,grossMargin:(Number(x.sale_price_kobo)-Number(x.provider_cost_kobo))/100}))})}catch(e){res.status(500).json({error:e.message||'Could not load marketplace catalog'})}});
+ app.get('/api/marketplace/orders',auth,async(req,res)=>{try{await schema();const r=await q('SELECT * FROM marketplace_orders WHERE user_id=$1 ORDER BY created_at DESC',[req.user.id]),orders=[];for(const o of r.rows){let pp=o.provider_payload||{};if(o.category==='sms'&&o.provider_order_id&&['active','fulfilling'].includes(o.status)){try{const x=await sync(o);if(x){pp=x;o.status=x.status==='received'?'completed':x.status==='expired'||x.status==='cancelled'?'refunded':o.status}}catch{}}orders.push({...o,providerPayload:pp,amount:Number(o.amount_kobo)/100})}res.json({orders})}catch(e){res.status(500).json({error:e.message||'Could not load marketplace orders'})}});
+ app.get('/api/marketplace/orders/:id',auth,async(req,res)=>{try{await schema();const r=await q('SELECT * FROM marketplace_orders WHERE id=$1 AND user_id=$2',[req.params.id,req.user.id]);if(!r.rowCount)return res.status(404).json({error:'Order not found'});const o=r.rows[0];if(o.category==='sms'&&o.provider_order_id){try{const x=await sync(o);if(x)o.provider_payload=x}catch{}}res.json({order:{...o,amount:Number(o.amount_kobo)/100}})}catch(e){res.status(500).json({error:e.message||'Could not load order'})}});
+ app.post('/api/marketplace/orders/initialize',auth,async(req,res)=>{try{await schema();const p=(await q("SELECT * FROM marketplace_products WHERE id=$1 AND status='active'",[req.body.productId])).rows[0];if(!p)return res.status(404).json({error:'Marketplace product not found'});const ref=`FXMKT-${Date.now()}-${crypto.randomBytes(5).toString('hex')}`,o=await q(`INSERT INTO marketplace_orders(user_id,product_id,paystack_reference,provider,category,amount_kobo,provider_cost_kobo,gross_margin_kobo,status,customer_payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending_payment',$9) RETURNING id`,[req.user.id,p.id,ref,p.provider,p.category,p.sale_price_kobo,p.provider_cost_kobo,Number(p.sale_price_kobo)-Number(p.provider_cost_kobo),req.body.customer||{}]),r=await fetch('https://api.paystack.co/transaction/initialize',{method:'POST',headers:{Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({email:req.user.email,amount:Number(p.sale_price_kobo),reference:ref,callback_url:`${process.env.FRONTEND_URL||''}/#/services`})}),d=await r.json();if(!d.status)return res.status(502).json({error:d.message||'Paystack initialization failed'});res.json({ok:true,orderId:o.rows[0].id,reference:ref,authorizationUrl:d.data.authorization_url,amount:Number(p.sale_price_kobo)/100})}catch(e){res.status(500).json({error:e.message||'Could not initialize payment'})}});
+ app.post('/api/marketplace/orders/verify',auth,async(req,res)=>{try{const ref=String(req.body.reference||''),r=await q('SELECT * FROM marketplace_orders WHERE paystack_reference=$1 AND user_id=$2',[ref,req.user.id]);if(!r.rowCount)return res.status(404).json({error:'Order reference not found'});const o=r.rows[0],v=await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(ref)}`,{headers:{Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`}}),d=await v.json();if(!d.status||d.data?.status!=='success')return res.status(400).json({error:'Payment is not verified yet'});if(Number(d.data.amount)!==Number(o.amount_kobo))return res.status(400).json({error:'Verified amount does not match order amount'});await q("UPDATE marketplace_orders SET status=CASE WHEN status='pending_payment' THEN 'paid' ELSE status END,customer_payload=$1,updated_at=now() WHERE id=$2",[d.data,o.id]);const f=await fulfill(o.id);res.json({ok:true,orderId:o.id,status:f.status,providerOrderId:f.providerOrderId||null,rental:f.rental||null})}catch(e){res.status(502).json({error:e.message||'Payment verification or fulfillment failed'})}});
+ app.post('/api/marketplace/orders/:id/cancel',auth,async(req,res)=>{try{const r=(await q('SELECT * FROM marketplace_orders WHERE id=$1 AND user_id=$2',[req.params.id,req.user.id])).rows[0];if(!r)return res.status(404).json({error:'Order not found'});if(r.category!=='sms'||!r.provider_order_id)return res.status(400).json({error:'This order cannot be cancelled here'});const d=await socio(`/rentals/${encodeURIComponent(r.provider_order_id)}/cancel`,{method:'POST'});await q("UPDATE marketplace_orders SET status='refunded',provider_payload=$1,updated_at=now() WHERE id=$2",[d,r.id]);res.json({ok:true,refunded:Number(d.refunded_ngn||0),message:'Rental cancelled and provider refund confirmed.'})}catch(e){res.status(e.status===409?409:502).json({error:e.message||'Could not cancel rental'})}});
+ app.post('/api/marketplace/orders/:id/finish',auth,async(req,res)=>{try{const r=(await q('SELECT * FROM marketplace_orders WHERE id=$1 AND user_id=$2',[req.params.id,req.user.id])).rows[0];if(!r)return res.status(404).json({error:'Order not found'});if(r.category!=='sms'||!r.provider_order_id)return res.status(400).json({error:'This order cannot be completed here'});await socio(`/rentals/${encodeURIComponent(r.provider_order_id)}/finish`,{method:'POST'});await q("UPDATE marketplace_orders SET status='completed',updated_at=now() WHERE id=$1",[r.id]);res.json({ok:true})}catch(e){res.status(502).json({error:e.message||'Could not complete rental'})}});
+ app.post('/api/marketplace/webhooks/paystack',async(req,res)=>{const sig=req.headers['x-paystack-signature'],raw=req.rawBody||JSON.stringify(req.body),expected=process.env.PAYSTACK_SECRET_KEY?crypto.createHmac('sha512',process.env.PAYSTACK_SECRET_KEY).update(raw).digest('hex'):'';if(!sig||!timingSafe(sig,expected))return res.status(401).json({error:'Invalid webhook signature'});res.json({received:true})});
+ app.post('/api/marketplace/webhooks/provider',async(req,res)=>{const sig=String(req.headers['x-sociosms-signature']||''),raw=req.rawBody||JSON.stringify(req.body);if(marketplaceConfig.sms.webhookSecret){const expected='sha256='+crypto.createHmac('sha256',marketplaceConfig.sms.webhookSecret).update(raw).digest('hex');if(!timingSafe(sig,expected))return res.status(401).json({error:'Invalid provider signature'})}try{const r=req.body?.rental;if(r?.id){const o=(await q('SELECT id FROM marketplace_orders WHERE provider_order_id=$1',[r.id])).rows[0];if(o)await q('UPDATE marketplace_orders SET provider_payload=$1,status=$2,updated_at=now() WHERE id=$3',[r,r.status==='received'?'completed':r.status==='expired'||r.status==='cancelled'?'refunded':'active',o.id])}res.json({received:true})}catch(e){res.status(500).json({error:e.message||'Webhook processing failed'})}});
+ app.post('/api/admin/marketplace/products',auth,admin,async(req,res)=>{try{await schema();const{category,provider,providerProductId,countryCode,serviceCode,name,description,providerCostNaira,salePriceNaira,metadata={}}=req.body,cost=Number(providerCostNaira),sale=Number(salePriceNaira);if(!['esim','sms'].includes(category)||!provider||!name||!Number.isFinite(cost)||!Number.isFinite(sale)||sale<cost)return res.status(400).json({error:'Invalid marketplace product or pricing'});const r=await q(`INSERT INTO marketplace_products(category,provider,provider_product_id,country_code,service_code,name,description,provider_cost_kobo,sale_price_kobo,currency,status,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'NGN','active',$10::jsonb) RETURNING id`,[category,provider,providerProductId||null,countryCode||null,serviceCode||null,name,description||null,moneyKobo(cost),moneyKobo(sale),JSON.stringify(metadata)]);res.json({ok:true,id:r.rows[0].id})}catch(e){res.status(400).json({error:e.message||'Could not add marketplace product'})}});
 }
