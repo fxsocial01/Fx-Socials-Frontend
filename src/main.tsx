@@ -1,14 +1,13 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import ServicesPage from './ServicesPage';
 import './index.css';
 import './admin-tools';
 import './payment-fix';
 
-// Render serves the live site from fx-socials-site.onrender.com.
-// Do not redirect to an unverified custom domain during app startup.
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+const isServicesPage=()=>location.hash.replace('#/','').split('?')[0]==='services';
+const root=createRoot(document.getElementById('root')!);
+const render=()=>root.render(<StrictMode>{isServicesPage()?<ServicesPage/>:<App/>}</StrictMode>);
+render();
+addEventListener('hashchange',render);
