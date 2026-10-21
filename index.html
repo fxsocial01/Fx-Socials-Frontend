@@ -7,9 +7,15 @@
     <link rel="icon" type="image/png" href="./favicon.png" />
     <link rel="apple-touch-icon" href="./favicon.png" />
     <title>Fx Socials — Social Account Marketplace</title>
+    <style>
+      #fx-services-link{position:fixed;right:14px;bottom:88px;z-index:9999;display:flex;align-items:center;gap:7px;padding:11px 14px;border-radius:999px;background:#fff;color:#080808;text-decoration:none;font:800 13px/1 system-ui,-apple-system,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.28);border:1px solid rgba(0,0,0,.08)}
+      #fx-services-link span{display:inline-flex;width:8px;height:8px;border-radius:50%;background:#7c3aed}
+      @media(min-width:800px){#fx-services-link{right:24px;bottom:28px}}
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <a id="fx-services-link" href="#/services" aria-label="Open eSIM and SMS rentals"><span></span>eSIM · SMS Rentals</a>
     <script>var logo='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"%3E%3Crect width="120" height="120" rx="28" fill="%23000000"/%3E%3Ctext x="60" y="72" text-anchor="middle" font-family="Arial,sans-serif" font-size="42" font-weight="800" fill="white"%3EFX%3C/text%3E%3C/svg%3E';</script>
     <script type="module" src="./src/main.tsx"></script>
   </body>
