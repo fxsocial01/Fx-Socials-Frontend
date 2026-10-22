@@ -1,37 +1,12 @@
 const API_BASE=(import.meta as any).env.VITE_API_BASE_URL||'https://fx-socials-api.onrender.com';
-
-function paymentReference(){
-  const saved=localStorage.getItem('fxs-last-payment-reference')||'';
-  const search=new URLSearchParams(location.search);
-  const direct=search.get('reference')||search.get('trxref')||'';
-  if(direct)return direct;
-  const hash=location.hash||'';
-  const queryIndex=hash.indexOf('?');
-  if(queryIndex>=0){
-    const h=new URLSearchParams(hash.slice(queryIndex+1));
-    return h.get('reference')||h.get('trxref')||saved;
-  }
-  return saved;
-}
-
-async function autoVerify(){
-  const token=localStorage.getItem('fxs-session')||'';
-  const reference=paymentReference();
-  if(!token||!reference)return;
-  try{
-    const r=await fetch(`${API_BASE}/api/wallet/verify`,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({sessionToken:token,reference})
-    });
-    const data=await r.json().catch(()=>({}));
-    if(!r.ok) return;
-    localStorage.removeItem('fxs-last-payment-reference');
-    history.replaceState(null,'',`${location.pathname}#/wallet`);
-    sessionStorage.setItem('fxs-payment-credited',data.message||'Payment credited');
-    window.dispatchEvent(new CustomEvent('fxs-payment-credited',{detail:data}));
-    window.location.reload();
-  }catch{}
-}
-
-void autoVerify();
+const ADMIN_WHATSAPP='2349072978807';
+const MANUAL_KEY='fxs-manual-topup';
+function paymentReference(){const saved=localStorage.getItem('fxs-last-payment-reference')||'';const search=new URLSearchParams(location.search);const direct=search.get('reference')||search.get('trxref')||'';if(direct)return direct;const hash=location.hash||'';const queryIndex=hash.indexOf('?');if(queryIndex>=0){const h=new URLSearchParams(hash.slice(queryIndex+1));return h.get('reference')||h.get('trxref')||saved}return saved}
+async function autoVerify(){const token=localStorage.getItem('fxs-session')||'',reference=paymentReference();if(!token||!reference)return;try{const r=await fetch(`${API_BASE}/api/wallet/verify`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionToken:token,reference})}),data=await r.json().catch(()=>({}));if(!r.ok)return;localStorage.removeItem('fxs-last-payment-reference');history.replaceState(null,'',`${location.pathname}#/wallet`);sessionStorage.setItem('fxs-payment-credited',data.message||'Payment credited');window.dispatchEvent(new CustomEvent('fxs-payment-credited',{detail:data}));window.location.reload()}catch{}}
+const money=(n:number)=>`₦${Number(n||0).toLocaleString('en-NG')}`;const getManual=()=>{try{return JSON.parse(localStorage.getItem(MANUAL_KEY)||'null')}catch{return null}};const saveManual=(x:any)=>localStorage.setItem(MANUAL_KEY,JSON.stringify(x));const token=()=>localStorage.getItem('fxs-session')||'';
+function manualPanel(){const existing=getManual(),amount=existing?.amount||'',started=existing?.startedAt?Number(existing.startedAt):0,active=Boolean(started&&Date.now()<started+30*60*1000&&existing?.status==='waiting');return `<div id="fxs-manual-topup" class="form-card" style="margin-top:16px"><h3>Manual wallet top-up</h3><p class="support-hint">Recommended for Numbers & eSIMs. Send the exact amount, then tap <b>I've paid</b>. Your payment will wait for admin approval for 30 minutes.</p><div style="background:#f7f7f8;border-radius:14px;padding:14px;margin:12px 0"><b>OPay</b><br/>Account name: <b>Yasir shehu</b><br/>Account number: <b>9159373413</b></div><label>Amount (₦)<input id="fxs-manual-amount" type="number" min="100" value="${amount}" ${active?'disabled':''}/></label>${active?`<div id="fxs-manual-countdown" style="font-weight:700;margin:10px 0">30:00</div><p class="support-hint">Waiting for admin approval. Your wallet balance will update automatically after approval.</p><button id="fxs-manual-paid" class="primary full">I've paid · Waiting for approval</button>`:`<button id="fxs-manual-start" class="outline full">Show payment details</button>`}</div>`}
+function mountManual(){if(!location.hash.startsWith('#/wallet')||document.getElementById('fxs-manual-topup'))return;const forms=[...document.querySelectorAll('.form-card')],walletForm=forms[forms.length-1];if(!walletForm)return;walletForm.insertAdjacentHTML('afterend',manualPanel());const start=document.getElementById('fxs-manual-start');if(start)start.addEventListener('click',()=>{const input=document.getElementById('fxs-manual-amount') as HTMLInputElement|null,n=Number(input?.value||0);if(!Number.isFinite(n)||n<100){alert('Enter an amount of at least ₦100.');return}saveManual({amount:n,startedAt:Date.now(),status:'waiting'});location.hash='#/wallet';setTimeout(()=>mountManual(),100)});const paid=document.getElementById('fxs-manual-paid');if(paid)paid.addEventListener('click',()=>{const x=getManual();if(!x)return;const u=JSON.parse(localStorage.getItem('fxs-user')||'{}'),text=['FX SOCIALS MANUAL WALLET TOP-UP','Customer: '+(u.email||'Customer'),'Amount: '+money(x.amount),'Status: I have paid — waiting for approval','Bank: OPay','Account name: Yasir shehu','Account number: 9159373413'].join('\n');window.open(`https://wa.me/${ADMIN_WHATSAPP}?text=${encodeURIComponent(text)}`,'_blank','noopener,noreferrer');saveManual({...x,whatsappOpenedAt:Date.now()});});tickManual()}
+let tickTimer:number|undefined;async function tickManual(){if(tickTimer)window.clearInterval(tickTimer);const tick=async()=>{const x=getManual(),el=document.getElementById('fxs-manual-countdown');if(!x||x.status!=='waiting')return;const left=Math.max(0,Number(x.startedAt)+30*60*1000-Date.now());if(left<=0){saveManual({...x,status:'expired'});const box=document.getElementById('fxs-manual-topup');if(box){box.outerHTML=manualPanel();setTimeout(()=>mountManual(),50)}return}if(el){const s=Math.floor(left/1000);el.textContent=`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`}const t=token();if(!t||!x.whatsappOpenedAt)return;try{const r=await fetch(`${API_BASE}/api/me/wallet`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionToken:t})}),d=await r.json().catch(()=>({})),balance=Number(d?.wallet?.balance||0),before=Number(localStorage.getItem('fxs-manual-before-balance')||balance);if(!localStorage.getItem('fxs-manual-before-balance'))localStorage.setItem('fxs-manual-before-balance',String(balance));else if(balance>before){localStorage.removeItem(MANUAL_KEY);localStorage.setItem('fxs-manual-before-balance',String(balance));window.location.reload()}}catch{}};await tick();tickTimer=window.setInterval(()=>void tick(),10000)}
+function contextualHint(){if(!location.hash.startsWith('#/services')&&!location.hash.startsWith('#/marketplace'))return;const page=document.querySelector('main');if(!page||document.getElementById('fxs-payment-hint'))return;const services=location.hash.startsWith('#/services'),box=document.createElement('div');box.id='fxs-payment-hint';box.className='notice';box.innerHTML=services?'<b>Top-up recommendation:</b> For number rentals and eSIMs, use <b>Manual payment</b> so admin can approve your wallet top-up quickly. <button>Top up wallet</button>':'<b>Top-up recommendation:</b> For social account purchases, use <b>Paystack</b> for wallet funding. <button>Top up wallet</button>';box.querySelector('button')?.addEventListener('click',()=>{location.hash='#/wallet'});page.prepend(box)}
+function mount(){mountManual();contextualHint();if(location.hash.startsWith('#/wallet'))void tickManual()}
+void autoVerify();setTimeout(mount,250);addEventListener('hashchange',()=>setTimeout(mount,250));new MutationObserver(()=>setTimeout(mount,50)).observe(document.body,{childList:true,subtree:true});
