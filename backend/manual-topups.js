@@ -1,0 +1,89 @@
+import crypto from 'crypto';
+
+const kobo=n=>Math.round(Number(n)*100);
+const naira=k=>Number(k||0)/100;
+const WHATSAPP_NUMBER=String(process.env.ADMIN_WHATSAPP_NUMBER||'2349072978807').replace(/\D/g,'');
+
+export function registerManualTopupRoutes({app,pool,auth,admin}){
+  const ready=pool.query(`CREATE TABLE IF NOT EXISTS manual_topups(
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_number TEXT UNIQUE NOT NULL,
+    user_id UUID NOT NULL REFERENCES users(id),
+    amount_kobo BIGINT NOT NULL,
+    bank_name TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    account_number TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    expires_at TIMESTAMPTZ NOT NULL,
+    approved_at TIMESTAMPTZ,
+    approved_by UUID REFERENCES users(id),
+    rejected_at TIMESTAMPTZ,
+    rejected_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  const ensure=async()=>{await ready};
+  const requestNo=()=>`FXM-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+
+  app.post('/api/manual-topup/request',auth,async(req,res)=>{
+    try{
+      await ensure();
+      const amount=Math.round(Number(req.body?.amountNaira));
+      if(!Number.isFinite(amount)||amount<100)return res.status(400).json({error:'Enter an amount of at least ₦100.'});
+      if(amount>5000000)return res.status(400).json({error:'Manual top-up cannot exceed ₦5,000,000.'});
+      const active=await pool.query(`SELECT request_number,amount_kobo,expires_at,status FROM manual_topups WHERE user_id=$1 AND status='pending' AND expires_at>now() ORDER BY created_at DESC LIMIT 1`,[req.user.id]);
+      if(active.rowCount)return res.status(409).json({error:'You already have a pending manual payment.',request:active.rows[0]});
+      const no=requestNo();
+      const r=await pool.query(`INSERT INTO manual_topups(request_number,user_id,amount_kobo,bank_name,account_name,account_number,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '30 minutes') RETURNING id,request_number,amount_kobo,status,expires_at`,[no,req.user.id,kobo(amount),'OPay','Yasir shehu','9159373413']);
+      const x=r.rows[0];
+      const text=['FX SOCIALS MANUAL WALLET TOP-UP',`Request: ${x.request_number}`,`Customer: ${req.user.email}`,`Amount: ₦${amount.toLocaleString('en-NG')}`,'Status: Paid — waiting for admin approval','Bank: OPay','Account name: Yasir shehu','Account number: 9159373413'].join('\n');
+      res.json({ok:true,request:{id:x.id,requestNumber:x.request_number,amount:naira(x.amount_kobo),status:x.status,expiresAt:x.expires_at},whatsappUrl:`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`});
+    }catch{res.status(500).json({error:'Could not create manual payment request.'})}
+  });
+
+  app.post('/api/manual-topup/status',auth,async(req,res)=>{
+    try{
+      await ensure();
+      await pool.query(`UPDATE manual_topups SET status='expired' WHERE user_id=$1 AND status='pending' AND expires_at<=now()`,[req.user.id]);
+      const r=await pool.query(`SELECT id,request_number,amount_kobo,status,expires_at,approved_at,created_at FROM manual_topups WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1`,[req.user.id]);
+      const x=r.rows[0];
+      res.json({request:x?{id:x.id,requestNumber:x.request_number,amount:naira(x.amount_kobo),status:x.status,expiresAt:x.expires_at,approvedAt:x.approved_at,createdAt:x.created_at}:null});
+    }catch{res.status(500).json({error:'Could not load manual payment status.'})}
+  });
+
+  app.post('/api/admin/manual-topups',auth,admin,async(req,res)=>{
+    try{
+      await ensure();
+      await pool.query(`UPDATE manual_topups SET status='expired' WHERE status='pending' AND expires_at<=now()`);
+      const r=await pool.query(`SELECT m.*,u.name,u.email FROM manual_topups m JOIN users u ON u.id=m.user_id ORDER BY m.created_at DESC LIMIT 100`);
+      res.json({requests:r.rows.map(x=>({id:x.id,requestNumber:x.request_number,userId:x.user_id,name:x.name,email:x.email,amount:naira(x.amount_kobo),bankName:x.bank_name,accountName:x.account_name,accountNumber:x.account_number,status:x.status,expiresAt:x.expires_at,createdAt:x.created_at}))});
+    }catch{res.status(500).json({error:'Could not load manual top-ups.'})}
+  });
+
+  app.post('/api/admin/manual-topups/approve',auth,admin,async(req,res)=>{
+    const c=await pool.connect();
+    try{
+      await ensure();
+      await c.query('BEGIN');
+      const r=await c.query(`SELECT * FROM manual_topups WHERE id=$1 FOR UPDATE`,[req.body?.requestId]);
+      const x=r.rows[0];
+      if(!x){await c.query('ROLLBACK');return res.status(404).json({error:'Manual payment request not found.'})}
+      if(x.status!=='pending'){await c.query('ROLLBACK');return res.status(400).json({error:`This request is already ${x.status}.`})}
+      if(new Date(x.expires_at).getTime()<=Date.now()){await c.query(`UPDATE manual_topups SET status='expired' WHERE id=$1`,[x.id]);await c.query('COMMIT');return res.status(400).json({error:'This 30-minute payment request has expired.'})}
+      await c.query(`UPDATE users SET balance_kobo=balance_kobo+$1 WHERE id=$2`,[x.amount_kobo,x.user_id]);
+      await c.query(`UPDATE manual_topups SET status='approved',approved_at=now(),approved_by=$1 WHERE id=$2`,[req.user.id,x.id]);
+      await c.query(`INSERT INTO wallet_audit(admin_id,user_id,amount_kobo,type,reason) VALUES($1,$2,$3,'manual_topup',$4)`,[req.user.id,x.user_id,x.amount_kobo,`Manual bank transfer approved: ${x.request_number}`]);
+      const b=await c.query(`SELECT balance_kobo FROM users WHERE id=$1`,[x.user_id]);
+      await c.query('COMMIT');
+      res.json({ok:true,message:`Manual top-up approved. ₦${naira(x.amount_kobo).toLocaleString('en-NG')} added to the customer's wallet.`,balance:naira(b.rows[0].balance_kobo)});
+    }catch{try{await c.query('ROLLBACK')}catch{}res.status(500).json({error:'Could not approve manual payment.'})}finally{c.release()}
+  });
+
+  app.post('/api/admin/manual-topups/reject',auth,admin,async(req,res)=>{
+    try{
+      await ensure();
+      const r=await pool.query(`UPDATE manual_topups SET status='rejected',rejected_at=now(),rejected_by=$1 WHERE id=$2 AND status='pending' RETURNING id`,[req.user.id,req.body?.requestId]);
+      if(!r.rowCount)return res.status(404).json({error:'Pending manual payment request not found.'});
+      res.json({ok:true,message:'Manual payment rejected.'});
+    }catch{res.status(500).json({error:'Could not reject manual payment.'})}
+  });
+}
