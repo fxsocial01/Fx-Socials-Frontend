@@ -35,9 +35,18 @@ export function registerManualTopupRoutes({app,pool,auth,admin}){
       const no=requestNo();
       const r=await pool.query(`INSERT INTO manual_topups(request_number,user_id,amount_kobo,bank_name,account_name,account_number,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '30 minutes') RETURNING id,request_number,amount_kobo,status,expires_at`,[no,req.user.id,kobo(amount),'OPay','Yasir shehu','9159373413']);
       const x=r.rows[0];
-      const text=['FX SOCIALS MANUAL WALLET TOP-UP',`Request: ${x.request_number}`,`Customer: ${req.user.email}`,`Amount: ₦${amount.toLocaleString('en-NG')}`,'Status: Paid — waiting for admin approval','Bank: OPay','Account name: Yasir shehu','Account number: 9159373413'].join('\n');
-      res.json({ok:true,request:{id:x.id,requestNumber:x.request_number,amount:naira(x.amount_kobo),status:x.status,expiresAt:x.expires_at},whatsappUrl:`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`});
+      res.json({ok:true,request:{id:x.id,requestNumber:x.request_number,amount:naira(x.amount_kobo),status:x.status,expiresAt:x.expires_at},account:{bankName:'OPay',accountName:'Yasir shehu',accountNumber:'9159373413'},whatsappUrl:`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(`FX SOCIALS MANUAL WALLET TOP-UP\nRequest: ${x.request_number}\nCustomer: ${req.user.email}\nAmount: ₦${amount.toLocaleString('en-NG')}\nStatus: Payment submitted — waiting for admin approval`)}`});
     }catch{res.status(500).json({error:'Could not create manual payment request.'})}
+  });
+
+  app.post('/api/manual-topup/paid',auth,async(req,res)=>{
+    try{
+      await ensure();
+      const r=await pool.query(`UPDATE manual_topups SET status='pending',created_at=created_at WHERE id=$1 AND user_id=$2 AND status='pending' AND expires_at>now() RETURNING id,request_number,amount_kobo,status,expires_at`,[req.body?.requestId,req.user.id]);
+      if(!r.rowCount)return res.status(400).json({error:'This payment request is missing or expired.'});
+      const x=r.rows[0];
+      res.json({ok:true,message:'Payment marked as submitted. Admin approval is required.',request:{id:x.id,requestNumber:x.request_number,amount:naira(x.amount_kobo),status:'pending',expiresAt:x.expires_at},whatsappUrl:`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(`FX SOCIALS MANUAL WALLET TOP-UP\nRequest: ${x.request_number}\nCustomer: ${req.user.email}\nAmount: ₦${naira(x.amount_kobo).toLocaleString('en-NG')}\nStatus: I have paid — please approve or decline this payment.`)}`});
+    }catch{res.status(500).json({error:'Could not submit manual payment.'})}
   });
 
   app.post('/api/manual-topup/status',auth,async(req,res)=>{
