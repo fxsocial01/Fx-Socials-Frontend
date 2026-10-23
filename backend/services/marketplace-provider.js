@@ -3,13 +3,10 @@
  *
  * The application owns catalog/pricing/payment state. Provider credentials
  * stay in Render environment variables and are never exposed to the client.
- *
- * This adapter intentionally does not expose third-party account OTP retrieval.
- * It is suitable for legitimate eSIM and communications services.
  */
 
 export class MarketplaceProvider {
-  constructor({ name, apiKey, baseUrl, timeoutMs = 15000 }) {
+  constructor({ name, apiKey, baseUrl, timeoutMs = 8000 }) {
     this.name = name;
     this.apiKey = apiKey;
     this.baseUrl = baseUrl?.replace(/\/$/, '');
@@ -40,6 +37,9 @@ export class MarketplaceProvider {
         throw new Error(data?.message || `${this.name} request failed (${response.status})`);
       }
       return data;
+    } catch (e) {
+      if (e?.name === 'AbortError') throw new Error(`${this.name} provider timed out. Please retry.`);
+      throw e;
     } finally {
       clearTimeout(timer);
     }
