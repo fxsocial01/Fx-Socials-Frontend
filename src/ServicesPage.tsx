@@ -61,6 +61,20 @@ const statusLabel = (s: string) => ({
 
 const canRefund = (s: string) => ['active', 'received', 'expired'].includes(s);
 
+const statusStyle = (s: string): React.CSSProperties => {
+  const map: Record<string, { bg: string; color: string }> = {
+    active: { bg: 'rgba(245,158,11,.14)', color: '#f59e0b' },
+    received: { bg: 'rgba(34,197,94,.14)', color: '#22c55e' },
+    completed: { bg: 'rgba(34,197,94,.14)', color: '#22c55e' },
+    refunded: { bg: 'rgba(59,130,246,.14)', color: '#60a5fa' },
+    cancelled: { bg: 'rgba(148,163,184,.14)', color: '#94a3b8' },
+    expired: { bg: 'rgba(239,68,68,.14)', color: '#f87171' },
+    fulfilling: { bg: 'rgba(245,158,11,.14)', color: '#f59e0b' },
+    paid: { bg: 'rgba(245,158,11,.14)', color: '#f59e0b' },
+  };
+  return { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 999, background: (map[s] || { bg: 'rgba(148,163,184,.14)', color: '#cbd5e1' }).bg, color: (map[s] || { bg: '', color: '#cbd5e1' }).color, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' };
+};
+
 export default function ServicesPage() {
   const [tab, setTab] = useState<'buy' | 'rent' | 'esim'>('rent');
   const [services, setServices] = useState<Service[]>(() => readCache(cache.services) || []);
@@ -135,7 +149,7 @@ export default function ServicesPage() {
   };
 
   useEffect(() => { void loadWallet(); void loadRentals(); if (tab === 'esim') void loadEsims(); else void loadServices(); }, [tab]);
-  useEffect(() => { if (!logged) return; const id = window.setInterval(() => void loadRentals(), 5000); return () => window.clearInterval(id); }, [logged]);
+  useEffect(() => { if (!logged) return; const id = window.setInterval(() => { void loadRentals(); void loadWallet(); }, 5000); return () => window.clearInterval(id); }, [logged]);
   useEffect(() => { if (tab !== 'esim' && service) void loadCountries(service); }, [service]);
   useEffect(() => { if (tab !== 'esim' && service && country) void loadServers(service, country); }, [service, country]);
 
@@ -177,30 +191,40 @@ export default function ServicesPage() {
   };
 
   const rentalSection = tab !== 'esim' ? (
-    <section className="section service-orders">
-      <div className="service-card-head">
-        <div><h2>My number purchases</h2><p>Only your SMS number purchases are shown here. Status and codes refresh automatically.</p></div>
-        {logged && <button className="outline small" onClick={() => void loadRentals()}>Refresh</button>}
+    <section className="section service-orders" style={{ overflowX: 'auto' }}>
+      <div className="service-card-head" style={{ marginBottom: 18 }}>
+        <div><h2>SMS rental history</h2><p>All your purchased numbers appear here. Codes, statuses and wallet refunds refresh automatically.</p></div>
+        {logged && <button className="outline small" onClick={() => void Promise.all([loadRentals(), loadWallet()])}>Refresh</button>}
       </div>
-      {!logged ? <div className="empty">Log in to see your number purchases.</div> : rentals.length ? rentals.map(o => {
-        const code = codeFrom(o);
-        const number = numberFrom(o);
-        return (
-          <article className="product rental-order" key={o.id}>
-            <div className="service-card-head">
-              <div><span className="platform">{countryFrom(o) || 'SMS'} · {serviceFrom(o)}</span><h3>{number || 'Number being assigned…'}</h3></div>
-              <strong>{money(o.amount)}</strong>
-            </div>
-            <p>Order ID: <b>{o.id}</b></p>
-            <p>Status: <b>{statusLabel(o.status)}</b></p>
-            <div className="fx-price"><span>PURCHASED NUMBER</span><strong>{number || 'Waiting for number…'}</strong></div>
-            <div className="fx-price"><span>VERIFICATION CODE</span><strong>{code || 'Waiting for code…'}</strong>{!code && <small>This updates automatically when the provider receives the SMS.</small>}</div>
-            <div className="hero-actions">
-              {canRefund(o.status) ? <button className="danger" disabled={cancelling === o.id} onClick={() => cancelRental(o.id)}>{cancelling === o.id ? 'Cancelling…' : 'Cancel & request refund'}</button> : o.status === 'refunded' ? <span className="support-hint"><b>Refunded</b> · wallet credited</span> : <span className="support-hint">{statusLabel(o.status)}</span>}
-            </div>
-          </article>
-        );
-      }) : <div className="empty">No SMS number purchases yet.</div>}
+      {!logged ? <div className="empty">Log in to see your number purchases.</div> : rentals.length ? (
+        <div style={{ minWidth: 920, border: '1px solid rgba(255,255,255,.08)', borderRadius: 16, overflow: 'hidden', background: 'rgba(255,255,255,.025)' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', color: '#f8fafc', fontSize: 14 }}>
+            <thead>
+              <tr style={{ background: 'rgba(255,255,255,.045)', textAlign: 'left' }}>
+                {['ID','Number','Verification Code','Country','Service','Status','Actions'].map(h => <th key={h} style={{ padding: '15px 14px', color: '#94a3b8', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 800, borderBottom: '1px solid rgba(255,255,255,.08)' }}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rentals.map(o => {
+                const code = codeFrom(o);
+                const number = numberFrom(o);
+                const status = statusLabel(o.status);
+                return <tr key={o.id} style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+                  <td style={{ padding: '15px 14px', fontWeight: 700, color: '#cbd5e1', whiteSpace: 'nowrap' }}>#{o.id}</td>
+                  <td style={{ padding: '15px 14px', fontWeight: 800, whiteSpace: 'nowrap' }}>{number || 'Assigning…'}</td>
+                  <td style={{ padding: '15px 14px' }}><span style={{ display: 'inline-flex', alignItems: 'center', minWidth: 100, justifyContent: 'center', padding: '8px 10px', borderRadius: 9, background: 'rgba(255,255,255,.06)', color: code ? '#f8fafc' : '#64748b', fontWeight: 800 }}>{code || 'N/A'}</span></td>
+                  <td style={{ padding: '15px 14px', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{countryFrom(o) || '—'}</td>
+                  <td style={{ padding: '15px 14px', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{serviceFrom(o)}</td>
+                  <td style={{ padding: '15px 14px' }}><span style={statusStyle(o.status)}><span style={{ width: 6, height: 6, borderRadius: 50, background: 'currentColor' }} />{status}</span></td>
+                  <td style={{ padding: '15px 14px', whiteSpace: 'nowrap' }}>
+                    {o.status === 'refunded' ? <span style={{ color: '#60a5fa', fontWeight: 700 }}>{money(o.amount)} returned</span> : canRefund(o.status) ? <button className="danger" disabled={cancelling === o.id} onClick={() => cancelRental(o.id)}>{cancelling === o.id ? 'Refunding…' : 'Cancel & refund'}</button> : o.status === 'expired' ? <span style={{ color: '#94a3b8', fontSize: 12 }}>Refund processing…</span> : <span style={{ color: '#64748b' }}>N/A</span>}
+                  </td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : <div className="empty">No SMS number purchases yet.</div>}
     </section>
   ) : null;
 
