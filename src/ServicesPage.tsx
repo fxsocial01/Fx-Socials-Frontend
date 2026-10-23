@@ -5,15 +5,25 @@ const money = (n: number) => `₦${Number(n || 0).toLocaleString('en-NG')}`;
 const token = () => localStorage.getItem('fxs-session') || '';
 const cache = { services: 'fxs-services-cache' };
 
-async function req(path: string, method = 'GET', body?: any) {
-  const r = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || 'Request failed');
-  return d;
+async function req(path: string, method = 'GET', body?: any, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(`${API_BASE}${path}`, {
+      method,
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'Request failed');
+    return d;
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw new Error('Live availability is taking too long. Please tap the selection again to retry.');
+    throw e;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 const readCache = (k: string) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
@@ -77,16 +87,38 @@ export default function ServicesPage() {
     try {
       const key = `fxs-countries-${s}`; const cached = readCache(key);
       if (cached) { setCountries(cached); setCountry(''); setServers([]); setServer(''); setLoading(false); void refreshCountries(s, key); return; }
-      const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`); const list = d.countries || [];
+      const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`, 'GET', undefined, 8000); const list = d.countries || [];
       setCountries(list); writeCache(key, list); setCountry(''); setServers([]); setServer('');
     } catch (e: any) { setMessage(e.message); } finally { setLoading(false); }
   };
-  const refreshCountries = async (s: string, key: string) => { try { const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`); const list = d.countries || []; writeCache(key, list); setCountries(list); } catch {} };
+  const refreshCountries = async (s: string, key: string) => { try { const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`, 'GET', undefined, 8000); const list = d.countries || []; writeCache(key, list); setCountries(list); } catch {} };
   const loadServers = async (s: string, c: string) => {
     if (!s || !c) { setServers([]); setServer(''); return; }
     setLoading(true);
-    try { const d = await req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(c)}`); setServers((d.servers || []).filter((x: any) => Number(x.stock || 0) > 0).map((x: any) => ({ server: x.server, server_name: x.server_name, stock: Number(x.stock || 0), salePrice: Number(x.salePrice || 0) }))); setServer(''); }
-    catch (e: any) { setMessage(e.message); setServers([]); } finally { setLoading(false); }
+    try {
+      const key = `fxs-prices-${s}-${c}`;
+      const cached = readCache(key);
+      if (cached?.servers?.length) {
+        setServers(cached.servers);
+        setServer('');
+        setLoading(false);
+        void refreshServers(s, c, key);
+        return;
+      }
+      const d = await req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(c)}`, 'GET', undefined, 8000);
+      const list = (d.servers || []).filter((x: any) => Number(x.stock || 0) > 0).map((x: any) => ({ server: x.server, server_name: x.server_name, stock: Number(x.stock || 0), salePrice: Number(x.salePrice || 0) }));
+      setServers(list); writeCache(key, { servers: list, checkedAt: Date.now() }); setServer('');
+    }
+    catch (e: any) { setMessage(e.message); setServers([]); }
+    finally { setLoading(false); }
+  };
+  const refreshServers = async (s: string, c: string, key: string) => {
+    try {
+      const d = await req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(c)}`, 'GET', undefined, 8000);
+      const list = (d.servers || []).filter((x: any) => Number(x.stock || 0) > 0).map((x: any) => ({ server: x.server, server_name: x.server_name, stock: Number(x.stock || 0), salePrice: Number(x.salePrice || 0) }));
+      writeCache(key, { servers: list, checkedAt: Date.now() });
+      setServers(list);
+    } catch {}
   };
   const loadEsims = async () => { try { const d = await req('/api/marketplace/live/esim/catalog'); setEsims(d.products || []); } catch (e: any) { setMessage(e.message); } };
 
@@ -123,8 +155,8 @@ export default function ServicesPage() {
       {message && <div className="notice">{message}<button onClick={() => setMessage('')}>×</button></div>}
 
       <section className="form-card service-card"><div className="service-card-head"><div><h2>Buy Number</h2><p>Choose the service, country and available number. Supplier pricing is never displayed.</p></div>{logged && <button className="wallet-pill" onClick={() => location.hash = '#/wallet'}>Wallet {money(wallet)}</button>}</div>
-        <div className="service-fields"><label>Social / service<select value={service} onChange={e => setService(e.target.value)}><option value="">Select service</option>{services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Country<select value={country} onChange={e => setCountry(e.target.value)} disabled={!service || loading}><option value="">{service ? 'Select country' : 'Select service first'}</option>{countries.map(c => <option key={c.country_code} value={c.country_code}>{c.flag || ''} {c.country_name} · {c.stock} available</option>)}</select></label><label>Number / server<select value={server} onChange={e => setServer(e.target.value)} disabled={!country || loading}><option value="">{country ? 'Select number option' : 'Select country first'}</option>{servers.map(s => <option key={s.server} value={s.server}>{s.server_name || `Server ${s.server}`} · {money(s.salePrice || 0)} · {s.stock} available</option>)}</select></label></div>
-        {loading && <p className="support-hint">Checking live availability…</p>}{selected && <div className="fx-price"><span>FX SOCIALS PRICE</span><strong>{money(selected.salePrice || 0)}</strong><small>Final customer price · provider price hidden</small></div>}{!loading && country && !servers.length && <div className="empty">No numbers are available for this selection right now.</div>}<button className="primary full" disabled={busy || !selected} onClick={pay}>{busy ? 'Processing…' : `Pay from wallet · ${selected ? money(selected.salePrice || 0) : 'FX Socials price'}`}</button>
+        <div className="service-fields"><label>Social / service<select value={service} onChange={e => setService(e.target.value)}><option value="">Select service</option>{services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Country<select value={country} onChange={e => setCountry(e.target.value)} disabled={!service || loading}><option value="">{service ? 'Select country' : 'Select service first'}</option>{countries.map(c => <option key={c.country_code} value={c.country_code}>{c.flag || ''} {c.country_name} · {c.stock} available</option>)}</select></label><label>Number / server<select value={server} onChange={e => setServer(e.target.value)} disabled={!country || loading}><option value="">{country ? 'Select number option' : 'Select country first'}</option>{servers.map(s => <option key={s.server} value={s.server}>{s.server_name || `Server ${s.server}`} · ${money(s.salePrice || 0)} · ${s.stock} available</option>)}</select></label></div>
+        {loading && <p className="support-hint">Checking number availability…</p>}{selected && <div className="fx-price"><span>FX SOCIALS PRICE</span><strong>{money(selected.salePrice || 0)}</strong><small>Final customer price · provider price hidden</small></div>}{!loading && country && !servers.length && <div className="empty">No numbers are available for this selection right now.</div>}<button className="primary full" disabled={busy || !selected} onClick={pay}>{busy ? 'Processing…' : `Pay from wallet · ${selected ? money(selected.salePrice || 0) : 'FX Socials price'}`}</button>
       </section>
 
       <section className="section service-esims"><div className="service-card-head"><div><h2>eSIMs</h2><p>Available eSIM plans are shown directly below. No extra switcher.</p></div></div><div className="product-grid">{esims.length ? esims.map(p => <article className="product" key={p.id}><span className="platform">eSIM · {p.country_code || 'GLOBAL'}</span><h3>{p.name}</h3><p>{p.description || 'Digital eSIM plan.'}</p><div className="product-bottom"><strong>{money(p.price)}</strong><button className="primary small" disabled={busy} onClick={() => esimPay(p)}>Pay from wallet</button></div></article>) : <div className="empty">No eSIM plans are available yet.</div>}</div></section>
