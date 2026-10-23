@@ -11,6 +11,12 @@ export const marketplaceConfig = {
     baseUrl: process.env.SMS_PROVIDER_BASE_URL,
     apiKey: process.env.SMS_PROVIDER_API_KEY,
     webhookSecret: process.env.SMS_PROVIDER_WEBHOOK_SECRET
+  },
+  smm: {
+    provider: process.env.SMM_PROVIDER || 'smm-panel-ng',
+    baseUrl: (process.env.SMM_API_URL || 'https://app.smmpanel.ng/api/v2').replace(/\/$/, ''),
+    apiKey: process.env.SMM_API_KEY,
+    markupPercent: Number(process.env.SMM_MARKUP_PERCENT || 40)
   }
 };
 
