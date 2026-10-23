@@ -23,7 +23,7 @@ type Service = { id: string; name: string };
 type Country = { country_code: string; country_name: string; flag?: string; stock: number };
 type Server = { server: string; server_name?: string; stock: number; salePrice?: number };
 type Product = { id: string; country_code?: string; name: string; description?: string; price: number };
-type RentalOrder = { id: string; category: string; provider_order_id?: string; amount: number; status: string; provider_payload?: any; customer_payload?: any; created_at: string; updated_at: string };
+type RentalOrder = { id: string; category: string; amount: number; status: string; provider_payload?: any; customer_payload?: any; created_at: string; updated_at: string };
 
 const codeFrom = (o: RentalOrder) => {
   const p = o.provider_payload || {};
@@ -36,47 +36,20 @@ const codeFrom = (o: RentalOrder) => {
   if (typeof p.sms === 'string') return p.sms;
   return '';
 };
-
-const numberFrom = (o: RentalOrder) => {
-  const p = o.provider_payload || {};
-  return p.phone_number || p.phoneNumber || p.number || p.msisdn || p.phone || '';
-};
-
-const serviceFrom = (o: RentalOrder) => {
-  const p = o.provider_payload || {};
-  const c = o.customer_payload || {};
-  return p.service_name || p.service || p.service_code || c.service || 'SMS verification';
-};
-
-const countryFrom = (o: RentalOrder) => {
-  const p = o.provider_payload || {};
-  const c = o.customer_payload || {};
-  return p.country_name || p.country || p.country_code || c.country || '';
-};
-
-const statusLabel = (s: string) => ({
-  active: 'Waiting for code', received: 'Code received', completed: 'Completed', refunded: 'Refunded',
-  cancelled: 'Cancelled', expired: 'Expired', fulfilling: 'Getting your number', paid: 'Processing',
-} as any)[s] || s;
-
+const numberFrom = (o: RentalOrder) => { const p = o.provider_payload || {}; return p.phone_number || p.phoneNumber || p.number || p.msisdn || p.phone || ''; };
+const serviceFrom = (o: RentalOrder) => { const p = o.provider_payload || {}; const c = o.customer_payload || {}; return p.service_name || p.service || p.service_code || c.service || 'SMS verification'; };
+const countryFrom = (o: RentalOrder) => { const p = o.provider_payload || {}; const c = o.customer_payload || {}; return p.country_name || p.country || p.country_code || c.country || ''; };
+const statusLabel = (s: string) => ({ active: 'Waiting for code', received: 'Code received', completed: 'Completed', refunded: 'Refunded', cancelled: 'Cancelled', expired: 'Expired', fulfilling: 'Getting your number', paid: 'Processing' } as any)[s] || s;
 const canRefund = (s: string) => ['active', 'received', 'expired'].includes(s);
-
 const statusStyle = (s: string): React.CSSProperties => {
   const map: Record<string, { bg: string; color: string }> = {
-    active: { bg: 'rgba(245,158,11,.14)', color: '#f59e0b' },
-    received: { bg: 'rgba(34,197,94,.14)', color: '#22c55e' },
-    completed: { bg: 'rgba(34,197,94,.14)', color: '#22c55e' },
-    refunded: { bg: 'rgba(59,130,246,.14)', color: '#60a5fa' },
-    cancelled: { bg: 'rgba(148,163,184,.14)', color: '#94a3b8' },
-    expired: { bg: 'rgba(239,68,68,.14)', color: '#f87171' },
-    fulfilling: { bg: 'rgba(245,158,11,.14)', color: '#f59e0b' },
-    paid: { bg: 'rgba(245,158,11,.14)', color: '#f59e0b' },
+    active: { bg: 'rgba(245,158,11,.14)', color: '#f59e0b' }, received: { bg: 'rgba(34,197,94,.14)', color: '#22c55e' }, completed: { bg: 'rgba(34,197,94,.14)', color: '#22c55e' }, refunded: { bg: 'rgba(59,130,246,.14)', color: '#60a5fa' }, cancelled: { bg: 'rgba(148,163,184,.14)', color: '#94a3b8' }, expired: { bg: 'rgba(239,68,68,.14)', color: '#f87171' }, fulfilling: { bg: 'rgba(245,158,11,.14)', color: '#f59e0b' }, paid: { bg: 'rgba(245,158,11,.14)', color: '#f59e0b' },
   };
-  return { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 999, background: (map[s] || { bg: 'rgba(148,163,184,.14)', color: '#cbd5e1' }).bg, color: (map[s] || { bg: '', color: '#cbd5e1' }).color, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' };
+  const v = map[s] || { bg: 'rgba(148,163,184,.14)', color: '#cbd5e1' };
+  return { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 999, background: v.bg, color: v.color, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' };
 };
 
 export default function ServicesPage() {
-  const [tab, setTab] = useState<'buy' | 'rent' | 'esim'>('rent');
   const [services, setServices] = useState<Service[]>(() => readCache(cache.services) || []);
   const [countries, setCountries] = useState<Country[]>([]);
   const [servers, setServers] = useState<Server[]>([]);
@@ -92,175 +65,72 @@ export default function ServicesPage() {
   const [cancelling, setCancelling] = useState('');
   const logged = Boolean(token());
 
-  const loadWallet = async () => {
-    if (!logged) return;
-    try { const d = await req('/api/me/wallet', 'POST', { sessionToken: token() }); setWallet(Number(d.wallet?.balance || 0)); } catch {}
-  };
-
-  const loadRentals = async () => {
-    if (!logged) { setRentals([]); return; }
-    try {
-      const d = await req('/api/marketplace/orders');
-      setRentals((d.orders || []).filter((o: any) => o.category === 'sms'));
-    } catch {}
-  };
-
+  const loadWallet = async () => { if (!logged) return; try { const d = await req('/api/me/wallet', 'POST', { sessionToken: token() }); setWallet(Number(d.wallet?.balance || 0)); } catch {} };
+  const loadRentals = async () => { if (!logged) { setRentals([]); return; } try { const d = await req('/api/marketplace/orders'); setRentals((d.orders || []).filter((o: any) => o.category === 'sms')); } catch {} };
   const loadServices = async () => {
     if (services.length) return;
-    try {
-      const d = await req('/api/marketplace/live/sms/services');
-      const list = d.services || [];
-      setServices(list); writeCache(cache.services, list);
-    } catch (e: any) { setMessage(e.message); }
+    try { const d = await req('/api/marketplace/live/sms/services'); const list = d.services || []; setServices(list); writeCache(cache.services, list); } catch (e: any) { setMessage(e.message); }
   };
-
   const loadCountries = async (s: string) => {
     if (!s) { setCountries([]); setCountry(''); setServers([]); setServer(''); return; }
     setLoading(true);
     try {
-      const key = `fxs-countries-${s}`;
-      const cached = readCache(key);
-      if (cached) {
-        setCountries(cached); setCountry(''); setServers([]); setServer(''); setLoading(false); void refreshCountries(s, key); return;
-      }
-      const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`);
-      const list = d.countries || [];
+      const key = `fxs-countries-${s}`; const cached = readCache(key);
+      if (cached) { setCountries(cached); setCountry(''); setServers([]); setServer(''); setLoading(false); void refreshCountries(s, key); return; }
+      const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`); const list = d.countries || [];
       setCountries(list); writeCache(key, list); setCountry(''); setServers([]); setServer('');
     } catch (e: any) { setMessage(e.message); } finally { setLoading(false); }
   };
-
-  const refreshCountries = async (s: string, key: string) => {
-    try { const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`); const list = d.countries || []; writeCache(key, list); setCountries(list); } catch {}
-  };
-
+  const refreshCountries = async (s: string, key: string) => { try { const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`); const list = d.countries || []; writeCache(key, list); setCountries(list); } catch {} };
   const loadServers = async (s: string, c: string) => {
     if (!s || !c) { setServers([]); setServer(''); return; }
     setLoading(true);
-    try {
-      const d = await req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(c)}`);
-      setServers((d.servers || []).filter((x: any) => Number(x.stock || 0) > 0).map((x: any) => ({ server: x.server, server_name: x.server_name, stock: Number(x.stock || 0), salePrice: Number(x.salePrice || 0) })));
-      setServer('');
-    } catch (e: any) { setMessage(e.message); setServers([]); } finally { setLoading(false); }
+    try { const d = await req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(c)}`); setServers((d.servers || []).filter((x: any) => Number(x.stock || 0) > 0).map((x: any) => ({ server: x.server, server_name: x.server_name, stock: Number(x.stock || 0), salePrice: Number(x.salePrice || 0) }))); setServer(''); }
+    catch (e: any) { setMessage(e.message); setServers([]); } finally { setLoading(false); }
   };
+  const loadEsims = async () => { try { const d = await req('/api/marketplace/live/esim/catalog'); setEsims(d.products || []); } catch (e: any) { setMessage(e.message); } };
 
-  const loadEsims = async () => {
-    setLoading(true);
-    try { const d = await req('/api/marketplace/live/esim/catalog'); setEsims(d.products || []); } catch (e: any) { setMessage(e.message); } finally { setLoading(false); }
-  };
-
-  useEffect(() => { void loadWallet(); void loadRentals(); if (tab === 'esim') void loadEsims(); else void loadServices(); }, [tab]);
+  useEffect(() => { void loadWallet(); void loadRentals(); void loadServices(); void loadEsims(); }, []);
   useEffect(() => { if (!logged) return; const id = window.setInterval(() => { void loadRentals(); void loadWallet(); }, 5000); return () => window.clearInterval(id); }, [logged]);
-  useEffect(() => { if (tab !== 'esim' && service) void loadCountries(service); }, [service]);
-  useEffect(() => { if (tab !== 'esim' && service && country) void loadServers(service, country); }, [service, country]);
+  useEffect(() => { if (service) void loadCountries(service); }, [service]);
+  useEffect(() => { if (service && country) void loadServers(service, country); }, [service, country]);
 
   const selected = useMemo(() => servers.find(s => s.server === server), [servers, server]);
-
   const pay = async () => {
     if (!logged) { location.hash = '#/account'; return; }
     if (!service || !country || !server || !selected) { setMessage('Please select a service, country and number option.'); return; }
     setBusy(true);
-    try {
-      const p = await req('/api/marketplace/live/sms/prepare', 'POST', { service, country, server });
-      const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.productId, customer: { service, country, server } });
-      setWallet(Number(d.walletBalance || 0));
-      localStorage.setItem('fxs-marketplace-order-id', d.orderId || '');
-      setMessage('Number purchased successfully. Your order is shown below.');
-      await loadRentals();
-      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-    } catch (e: any) { setMessage(e.message); } finally { setBusy(false); }
+    try { const p = await req('/api/marketplace/live/sms/prepare', 'POST', { service, country, server }); const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.productId, customer: { service, country, server } }); setWallet(Number(d.walletBalance || 0)); localStorage.setItem('fxs-marketplace-order-id', d.orderId || ''); setMessage('Number purchased successfully. Your order is shown below.'); await loadRentals(); window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); }
+    catch (e: any) { setMessage(e.message); } finally { setBusy(false); }
   };
-
   const esimPay = async (p: Product) => {
     if (!logged) { location.hash = '#/account'; return; }
     setBusy(true);
-    try {
-      const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.id, customer: { category: 'esim', country: p.country_code } });
-      setWallet(Number(d.walletBalance || 0)); setMessage('eSIM purchased successfully from your FX Socials wallet.');
-      localStorage.setItem('fxs-marketplace-order-id', d.orderId || '');
-    } catch (e: any) { setMessage(e.message); } finally { setBusy(false); }
+    try { const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.id, customer: { category: 'esim', country: p.country_code } }); setWallet(Number(d.walletBalance || 0)); setMessage('eSIM purchased successfully from your FX Socials wallet.'); localStorage.setItem('fxs-marketplace-order-id', d.orderId || ''); }
+    catch (e: any) { setMessage(e.message); } finally { setBusy(false); }
   };
-
   const cancelRental = async (id: string) => {
     if (!confirm('Cancel this SMS rental and request the available wallet refund?')) return;
     setCancelling(id);
-    try {
-      const d = await req(`/api/marketplace/orders/${id}/cancel`, 'POST');
-      setMessage(d.message || 'Rental cancelled and wallet refunded.');
-      await Promise.all([loadRentals(), loadWallet()]);
-    } catch (e: any) { setMessage(e.message); } finally { setCancelling(''); }
+    try { const d = await req(`/api/marketplace/orders/${id}/cancel`, 'POST'); setMessage(d.message || 'Rental cancelled and wallet refunded.'); await Promise.all([loadRentals(), loadWallet()]); }
+    catch (e: any) { setMessage(e.message); } finally { setCancelling(''); }
   };
 
-  const rentalSection = tab !== 'esim' ? (
-    <section className="section service-orders" style={{ overflowX: 'auto' }}>
-      <div className="service-card-head" style={{ marginBottom: 18 }}>
-        <div><h2>SMS rental history</h2><p>All your purchased numbers appear here. Codes, statuses and wallet refunds refresh automatically.</p></div>
-        {logged && <button className="outline small" onClick={() => void Promise.all([loadRentals(), loadWallet()])}>Refresh</button>}
-      </div>
-      {!logged ? <div className="empty">Log in to see your number purchases.</div> : rentals.length ? (
-        <div style={{ minWidth: 920, border: '1px solid rgba(255,255,255,.08)', borderRadius: 16, overflow: 'hidden', background: 'rgba(255,255,255,.025)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', color: '#f8fafc', fontSize: 14 }}>
-            <thead>
-              <tr style={{ background: 'rgba(255,255,255,.045)', textAlign: 'left' }}>
-                {['ID','Number','Verification Code','Country','Service','Status','Actions'].map(h => <th key={h} style={{ padding: '15px 14px', color: '#94a3b8', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 800, borderBottom: '1px solid rgba(255,255,255,.08)' }}>{h}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {rentals.map(o => {
-                const code = codeFrom(o);
-                const number = numberFrom(o);
-                const status = statusLabel(o.status);
-                return <tr key={o.id} style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}>
-                  <td style={{ padding: '15px 14px', fontWeight: 700, color: '#cbd5e1', whiteSpace: 'nowrap' }}>#{o.id}</td>
-                  <td style={{ padding: '15px 14px', fontWeight: 800, whiteSpace: 'nowrap' }}>{number || 'Assigning…'}</td>
-                  <td style={{ padding: '15px 14px' }}><span style={{ display: 'inline-flex', alignItems: 'center', minWidth: 100, justifyContent: 'center', padding: '8px 10px', borderRadius: 9, background: 'rgba(255,255,255,.06)', color: code ? '#f8fafc' : '#64748b', fontWeight: 800 }}>{code || 'N/A'}</span></td>
-                  <td style={{ padding: '15px 14px', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{countryFrom(o) || '—'}</td>
-                  <td style={{ padding: '15px 14px', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{serviceFrom(o)}</td>
-                  <td style={{ padding: '15px 14px' }}><span style={statusStyle(o.status)}><span style={{ width: 6, height: 6, borderRadius: 50, background: 'currentColor' }} />{status}</span></td>
-                  <td style={{ padding: '15px 14px', whiteSpace: 'nowrap' }}>
-                    {o.status === 'refunded' ? <span style={{ color: '#60a5fa', fontWeight: 700 }}>{money(o.amount)} returned</span> : canRefund(o.status) ? <button className="danger" disabled={cancelling === o.id} onClick={() => cancelRental(o.id)}>{cancelling === o.id ? 'Refunding…' : 'Cancel & refund'}</button> : o.status === 'expired' ? <span style={{ color: '#94a3b8', fontSize: 12 }}>Refund processing…</span> : <span style={{ color: '#64748b' }}>N/A</span>}
-                  </td>
-                </tr>;
-              })}
-            </tbody>
-          </table>
-        </div>
-      ) : <div className="empty">No SMS number purchases yet.</div>}
-    </section>
-  ) : null;
+  return <div className="app-shell">
+    <header className="topbar"><button className="brand" onClick={() => location.hash = '#/home'}><b>FX SOCIALS</b></button><nav><button onClick={() => location.hash = '#/marketplace'}>Buy accounts</button><button onClick={() => location.hash = '#/services'}>Numbers & eSIMs</button><button onClick={() => location.hash = '#/sell'}>Sell an account</button><button onClick={() => location.hash = '#/how'}>How it works</button><button onClick={() => location.hash = '#/support'}>Support</button></nav><div className="top-actions">{logged && <button className="wallet-pill" onClick={() => location.hash = '#/wallet'}>{money(wallet)}</button>}<button className="primary small" onClick={() => location.hash = logged ? '#/dashboard' : '#/account'}>{logged ? 'My account' : 'Login / Register'}</button></div></header>
+    <main className="section page">
+      <section className="hero services-hero"><div><span className="eyebrow">FX SOCIALS SERVICES</span><h1>Numbers & eSIMs<br /><em>simple, fast, clear.</em></h1><p>Buy a number or eSIM directly from this page. No extra switcher or separate rental selector.</p></div><div className="hero-card"><b>FX SOCIALS PRICING</b><strong>40% markup</strong><p>Provider costs stay private. Your customer sees one simple FX Socials price.</p></div></section>
+      {message && <div className="notice">{message}<button onClick={() => setMessage('')}>×</button></div>}
 
-  const purchaseSection = tab !== 'esim' ? (
-    <>
-      <section className="form-card service-card">
-        <div className="service-card-head"><div><h2>{tab === 'buy' ? 'Buy Number' : 'Rent Number'}</h2><p>Live availability is checked in the background. Supplier pricing is never displayed.</p></div>{logged && <button className="wallet-pill" onClick={() => location.hash = '#/wallet'}>Wallet {money(wallet)}</button>}</div>
-        <div className="service-fields">
-          <label>Social / service<select value={service} onChange={e => setService(e.target.value)}><option value="">Select service</option>{services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
-          <label>Country<select value={country} onChange={e => setCountry(e.target.value)} disabled={!service || loading}><option value="">{service ? 'Select country' : 'Select service first'}</option>{countries.map(c => <option key={c.country_code} value={c.country_code}>{c.flag || ''} {c.country_name} · {c.stock} available</option>)}</select></label>
-          <label>Number / server<select value={server} onChange={e => setServer(e.target.value)} disabled={!country || loading}><option value="">{country ? 'Select number option' : 'Select country first'}</option>{servers.map(s => <option key={s.server} value={s.server}>{s.server_name || `Server ${s.server}`} · {money(s.salePrice || 0)} · {s.stock} available</option>)}</select></label>
-        </div>
-        {loading && <p className="support-hint">Checking live availability…</p>}
-        {selected && <div className="fx-price"><span>FX SOCIALS PRICE</span><strong>{money(selected.salePrice || 0)}</strong><small>Final customer price · provider price hidden</small></div>}
-        {!loading && country && !servers.length && <div className="empty">No numbers are available for this selection right now.</div>}
-        <button className="primary full" disabled={busy || !selected} onClick={pay}>{busy ? 'Processing…' : `Pay from wallet · ${selected ? money(selected.salePrice || 0) : 'FX Socials price'}`}</button>
+      <section className="form-card service-card"><div className="service-card-head"><div><h2>Buy Number</h2><p>Choose the service, country and available number. Supplier pricing is never displayed.</p></div>{logged && <button className="wallet-pill" onClick={() => location.hash = '#/wallet'}>Wallet {money(wallet)}</button>}</div>
+        <div className="service-fields"><label>Social / service<select value={service} onChange={e => setService(e.target.value)}><option value="">Select service</option>{services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Country<select value={country} onChange={e => setCountry(e.target.value)} disabled={!service || loading}><option value="">{service ? 'Select country' : 'Select service first'}</option>{countries.map(c => <option key={c.country_code} value={c.country_code}>{c.flag || ''} {c.country_name} · {c.stock} available</option>)}</select></label><label>Number / server<select value={server} onChange={e => setServer(e.target.value)} disabled={!country || loading}><option value="">{country ? 'Select number option' : 'Select country first'}</option>{servers.map(s => <option key={s.server} value={s.server}>{s.server_name || `Server ${s.server}`} · {money(s.salePrice || 0)} · {s.stock} available</option>)}</select></label></div>
+        {loading && <p className="support-hint">Checking live availability…</p>}{selected && <div className="fx-price"><span>FX SOCIALS PRICE</span><strong>{money(selected.salePrice || 0)}</strong><small>Final customer price · provider price hidden</small></div>}{!loading && country && !servers.length && <div className="empty">No numbers are available for this selection right now.</div>}<button className="primary full" disabled={busy || !selected} onClick={pay}>{busy ? 'Processing…' : `Pay from wallet · ${selected ? money(selected.salePrice || 0) : 'FX Socials price'}`}</button>
       </section>
-      {services.length > 0 && <section className="section service-popular"><h2>Available services</h2><div className="platform-selector">{services.slice(0, 30).map(s => <button key={s.id} className={service === s.id ? 'chosen' : ''} onClick={() => setService(s.id)}>{s.name}</button>)}</div></section>}
-    </>
-  ) : (
-    <section className="product-grid service-esims">
-      {esims.length ? esims.map(p => <article className="product" key={p.id}><span className="platform">eSIM · {p.country_code || 'GLOBAL'}</span><h3>{p.name}</h3><p>{p.description || 'Digital eSIM plan.'}</p><div className="product-bottom"><strong>{money(p.price)}</strong><button className="primary small" disabled={busy} onClick={() => esimPay(p)}>Pay from wallet</button></div></article>) : <div className="empty">No eSIM plans are available yet.</div>}
-    </section>
-  );
 
-  return (
-    <div className="app-shell">
-      <header className="topbar"><button className="brand" onClick={() => location.hash = '#/home'}><b>FX SOCIALS</b></button><nav><button onClick={() => location.hash = '#/marketplace'}>Buy accounts</button><button onClick={() => location.hash = '#/services'}>Numbers & eSIMs</button><button onClick={() => location.hash = '#/sell'}>Sell an account</button><button onClick={() => location.hash = '#/how'}>How it works</button><button onClick={() => location.hash = '#/support'}>Support</button></nav><div className="top-actions">{logged && <button className="wallet-pill" onClick={() => location.hash = '#/wallet'}>{money(wallet)}</button>}<button className="primary small" onClick={() => location.hash = logged ? '#/dashboard' : '#/account'}>{logged ? 'My account' : 'Login / Register'}</button></div></header>
-      <main className="section page">
-        <section className="hero services-hero"><div><span className="eyebrow">FX SOCIALS SERVICES</span><h1>Numbers & eSIMs<br /><em>simple, fast, clear.</em></h1><p>Choose a service, country and available number. Customers see only the final FX Socials price.</p></div><div className="hero-card"><b>FX SOCIALS PRICING</b><strong>40% markup</strong><p>Provider costs stay private. Your customer sees one simple FX Socials price.</p></div></section>
-        {message && <div className="notice">{message}<button onClick={() => setMessage('')}>×</button></div>}
-        <div className="platform-selector service-tabs"><button className={tab === 'buy' ? 'chosen' : ''} onClick={() => setTab('buy')}>Buy Number</button><button className={tab === 'rent' ? 'chosen' : ''} onClick={() => setTab('rent')}>Rent Number</button><button className={tab === 'esim' ? 'chosen' : ''} onClick={() => setTab('esim')}>eSIMs</button></div>
-        {purchaseSection}
-        {rentalSection}
-        <p className="support-hint service-note">All purchases use your FX Socials wallet. Top up your wallet before buying.</p>
-      </main>
-    </div>
-  );
+      <section className="section service-esims"><div className="service-card-head"><div><h2>eSIMs</h2><p>Available eSIM plans are shown directly below. No extra switcher.</p></div></div><div className="product-grid">{esims.length ? esims.map(p => <article className="product" key={p.id}><span className="platform">eSIM · {p.country_code || 'GLOBAL'}</span><h3>{p.name}</h3><p>{p.description || 'Digital eSIM plan.'}</p><div className="product-bottom"><strong>{money(p.price)}</strong><button className="primary small" disabled={busy} onClick={() => esimPay(p)}>Pay from wallet</button></div></article>) : <div className="empty">No eSIM plans are available yet.</div>}</div></section>
+
+      <section className="section service-orders" style={{ overflowX: 'auto' }}><div className="service-card-head" style={{ marginBottom: 18 }}><div><h2>SMS rental history</h2><p>Purchased numbers, codes, statuses and wallet refunds refresh automatically.</p></div>{logged && <button className="outline small" onClick={() => void Promise.all([loadRentals(), loadWallet()])}>Refresh</button>}</div>{!logged ? <div className="empty">Log in to see your number purchases.</div> : rentals.length ? <div style={{ minWidth: 920, border: '1px solid rgba(255,255,255,.08)', borderRadius: 16, overflow: 'hidden', background: 'rgba(255,255,255,.025)' }}><table style={{ width: '100%', borderCollapse: 'collapse', color: '#f8fafc', fontSize: 14 }}><thead><tr style={{ background: 'rgba(255,255,255,.045)', textAlign: 'left' }}>{['ID','Number','Verification Code','Country','Service','Status','Actions'].map(h => <th key={h} style={{ padding: '15px 14px', color: '#94a3b8', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 800, borderBottom: '1px solid rgba(255,255,255,.08)' }}>{h}</th>)}</tr></thead><tbody>{rentals.map(o => { const code = codeFrom(o); const number = numberFrom(o); return <tr key={o.id} style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}><td style={{ padding: '15px 14px', fontWeight: 700, color: '#cbd5e1', whiteSpace: 'nowrap' }}>#{o.id}</td><td style={{ padding: '15px 14px', fontWeight: 800, whiteSpace: 'nowrap' }}>{number || 'Assigning…'}</td><td style={{ padding: '15px 14px' }}><span style={{ display: 'inline-flex', alignItems: 'center', minWidth: 100, justifyContent: 'center', padding: '8px 10px', borderRadius: 9, background: 'rgba(255,255,255,.06)', color: code ? '#f8fafc' : '#64748b', fontWeight: 800 }}>{code || 'N/A'}</span></td><td style={{ padding: '15px 14px', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{countryFrom(o) || '—'}</td><td style={{ padding: '15px 14px', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{serviceFrom(o)}</td><td style={{ padding: '15px 14px' }}><span style={statusStyle(o.status)}><span style={{ width: 6, height: 6, borderRadius: 50, background: 'currentColor' }} />{statusLabel(o.status)}</span></td><td style={{ padding: '15px 14px', whiteSpace: 'nowrap' }}>{o.status === 'refunded' ? <span style={{ color: '#60a5fa', fontWeight: 700 }}>{money(o.amount)} returned</span> : canRefund(o.status) ? <button className="danger" disabled={cancelling === o.id} onClick={() => cancelRental(o.id)}>{cancelling === o.id ? 'Refunding…' : 'Cancel & refund'}</button> : <span style={{ color: '#64748b' }}>N/A</span>}</td></tr>; })}</tbody></table></div> : <div className="empty">No SMS number purchases yet.</div>}</section>
+      <p className="support-hint service-note">All purchases use your FX Socials wallet. Top up your wallet before buying.</p>
+    </main>
+  </div>;
 }
