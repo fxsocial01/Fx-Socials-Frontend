@@ -8,7 +8,7 @@ async function socio(path, options={}) {
   if (!marketplaceConfig.sms.apiKey) throw new Error('SMS provider is not configured');
   const base=(marketplaceConfig.sms.baseUrl||'https://sociosms.com/api/public/v1').replace(/\/$/,'');
   const r=await fetch(base+path,{...options,headers:{Authorization:`Bearer ${marketplaceConfig.sms.apiKey}`,Accept:'application/json','Content-Type':'application/json',...(options.headers||{})}});
-  const d=await r.json().catch(()=>({}));
+  const d=await r.json().catch(() => ({}));
   if(!r.ok) throw Object.assign(new Error(d?.error?.message||d?.message||`SMS provider request failed (${r.status})`),{status:r.status});
   return d;
 }
@@ -21,7 +21,7 @@ export function registerMarketplaceRoutes({app,pool,auth,admin}) {
     ALTER TABLE marketplace_orders ADD COLUMN IF NOT EXISTS provider_order_id TEXT;
     ALTER TABLE marketplace_orders ADD COLUMN IF NOT EXISTS refund_credited BOOLEAN NOT NULL DEFAULT false;
     CREATE TABLE IF NOT EXISTS wallets(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,balance_kobo BIGINT NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
-    INSERT INTO wallets(user_id,balance_kobo) SELECT id,balance_kobo FROM users ON CONFLICT(user_id) DO UPDATE SET balance_kobo=EXCLUDED.balance_kobo;
+    INSERT INTO wallets(user_id,balance_kobo) SELECT id,balance_kobo FROM users ON CONFLICT(user_id) DO NOTHING;
   `);
 
   const refundIfNeeded=async(orderId)=>{
@@ -33,6 +33,7 @@ export function registerMarketplaceRoutes({app,pool,auth,admin}) {
       if(!o){await c.query('ROLLBACK');return false;}
       if(o.refund_credited){await c.query('COMMIT');return false;}
       await c.query('UPDATE wallets SET balance_kobo=balance_kobo+$1,updated_at=now() WHERE user_id=$2',[Number(o.amount_kobo),o.user_id]);
+      await c.query('UPDATE users SET balance_kobo=balance_kobo+$1 WHERE id=$2',[Number(o.amount_kobo),o.user_id]);
       await c.query("UPDATE marketplace_orders SET status='refunded',refund_credited=true,updated_at=now() WHERE id=$1",[orderId]);
       await c.query('COMMIT');
       return true;
@@ -52,10 +53,18 @@ export function registerMarketplaceRoutes({app,pool,auth,admin}) {
   };
 
   const deduct=async(userId,amount,orderId)=>{
-    const r=await q("UPDATE wallets SET balance_kobo=balance_kobo-$1,updated_at=now() WHERE user_id=$2 AND balance_kobo>=$1 RETURNING balance_kobo",[amount,userId]);
-    if(!r.rowCount) throw Object.assign(new Error('Insufficient FX Socials wallet balance or wallet not found. Please top up your FX Socials wallet first.'),{status:402});
-    await q("UPDATE marketplace_orders SET status='paid',updated_at=now() WHERE id=$1 AND status='wallet_pending'",[orderId]);
-    return Number(r.rows[0].balance_kobo);
+    const c=await pool.connect();
+    try{
+      await c.query('BEGIN');
+      const r=await c.query("SELECT balance_kobo FROM users WHERE id=$1 FOR UPDATE",[userId]);
+      const balance=Number(r.rows[0]?.balance_kobo||0);
+      if(!r.rowCount||balance<amount) throw Object.assign(new Error('Insufficient FX Socials wallet balance or wallet not found. Please top up your FX Socials wallet first.'),{status:402});
+      await c.query('UPDATE users SET balance_kobo=balance_kobo-$1 WHERE id=$2',[amount,userId]);
+      await c.query('UPDATE wallets SET balance_kobo=balance_kobo-$1,updated_at=now() WHERE user_id=$2',[amount,userId]);
+      await c.query("UPDATE marketplace_orders SET status='paid',updated_at=now() WHERE id=$1 AND status='wallet_pending'",[orderId]);
+      await c.query('COMMIT');
+      return balance-amount;
+    }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
   };
 
   const fulfill=async(order)=>{
@@ -65,10 +74,15 @@ export function registerMarketplaceRoutes({app,pool,auth,admin}) {
     if(!p) throw new Error('Marketplace product not found');
     const m=p.metadata||{}, body={service:p.service_code,...(p.country_code?{country:p.country_code}:{}),...(m.server?{server:m.server}:{}),...(m.strategy?{strategy:m.strategy}:{}),...(m.maxPriceNgn?{max_price_ngn:Number(m.maxPriceNgn)}:{}),...(m.autoCancelAfter?{auto_cancel_after:Number(m.autoCancelAfter)}:{})};
     await q("UPDATE marketplace_orders SET status='fulfilling',updated_at=now() WHERE id=$1",[order.id]);
-    const d=await socio('/rentals',{method:'POST',body:JSON.stringify(body)}), rental=d?.rental;
-    if(!rental?.id) throw new Error('SMS provider did not return a rental');
-    await q("UPDATE marketplace_orders SET provider_order_id=$1,status='active',provider_payload=$2,updated_at=now() WHERE id=$3",[rental.id,rental,order.id]);
-    return {status:'active',providerOrderId:rental.id,rental};
+    try {
+      const d=await socio('/rentals',{method:'POST',body:JSON.stringify(body)}), rental=d?.rental;
+      if(!rental?.id) throw new Error('SMS provider did not return a rental');
+      await q("UPDATE marketplace_orders SET provider_order_id=$1,status='active',provider_payload=$2,updated_at=now() WHERE id=$3",[rental.id,rental,order.id]);
+      return {status:'active',providerOrderId:rental.id,rental};
+    } catch(e) {
+      await refundIfNeeded(order.id);
+      throw e;
+    }
   };
 
   app.get('/api/marketplace/live/sms/services',async(_req,res)=>{try{const d=await socio('/services');res.json({services:d.services||[]});}catch(e){res.status(502).json({error:e.message||'Could not load SMS services'});}});
@@ -86,7 +100,7 @@ export function registerMarketplaceRoutes({app,pool,auth,admin}) {
   app.post('/api/marketplace/orders/purchase',auth,async(req,res)=>{let orderId=null;try{await schema();const p=(await q("SELECT * FROM marketplace_products WHERE id=$1 AND status='active'",[req.body.productId])).rows[0];if(!p)return res.status(404).json({error:'Marketplace product not found'});const amount=Number(p.sale_price_kobo);const o=(await q(`INSERT INTO marketplace_orders(user_id,product_id,provider,category,amount_kobo,provider_cost_kobo,gross_margin_kobo,status,customer_payload) VALUES($1,$2,$3,$4,$5,$6,$7,'wallet_pending',$8) RETURNING *`,[req.user.id,p.id,p.provider,p.category,amount,p.provider_cost_kobo,amount-Number(p.provider_cost_kobo),req.body.customer||{}])).rows[0];orderId=o.id;const balance=await deduct(req.user.id,amount,o.id);const updated=(await q('SELECT * FROM marketplace_orders WHERE id=$1',[o.id])).rows[0];const fulfillment=await fulfill(updated);res.json({ok:true,orderId:o.id,status:fulfillment.status,providerOrderId:fulfillment.providerOrderId||null,rental:fulfillment.rental||null,walletBalance:balance/100});}catch(e){if(orderId){try{const o=(await q('SELECT * FROM marketplace_orders WHERE id=$1',[orderId])).rows[0];if(o?.status==='paid'&&!o.refund_credited)await refundIfNeeded(orderId);}catch{}}res.status(e.status===402?402:502).json({error:e.message||'Marketplace purchase failed'});}});
   app.post('/api/marketplace/orders/initialize',auth,async(req,res)=>{try{await schema();const p=(await q("SELECT * FROM marketplace_products WHERE id=$1 AND status='active'",[req.body.productId])).rows[0];if(!p)return res.status(404).json({error:'Marketplace product not found'});const w=(await q('SELECT balance_kobo FROM wallets WHERE user_id=$1',[req.user.id])).rows[0];if(!w)return res.status(400).json({error:'Wallet not found. Please top up your FX Socials wallet first.'});const amount=Number(p.sale_price_kobo),balance=Number(w.balance_kobo);if(balance<amount)return res.status(402).json({error:'Insufficient FX Socials wallet balance',required:amount/100,balance:balance/100,topUpRequired:(amount-balance)/100});const ref=`FXMKT-${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;const o=(await q(`INSERT INTO marketplace_orders(user_id,product_id,paystack_reference,provider,category,amount_kobo,provider_cost_kobo,gross_margin_kobo,status,customer_payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'wallet_pending',$9) RETURNING id`,[req.user.id,p.id,ref,p.provider,p.category,amount,p.provider_cost_kobo,amount-Number(p.provider_cost_kobo),req.body.customer||{}])).rows[0];res.json({ok:true,orderId:o.id,reference:ref,amount:amount/100,walletBalance:balance/100});}catch(e){res.status(500).json({error:e.message||'Could not initialize wallet purchase'});}});
 
-  app.post('/api/marketplace/orders/:id/cancel',auth,async(req,res)=>{try{const o=(await q('SELECT * FROM marketplace_orders WHERE id=$1 AND user_id=$2',[req.params.id,req.user.id])).rows[0];if(!o)return res.status(404).json({error:'Order not found'});if(o.category!=='sms'||!o.provider_order_id)return res.status(400).json({error:'This order cannot be cancelled here'});if(o.refund_credited)return res.json({ok:true,refunded:Number(o.amount_kobo)/100,message:'This order was already refunded.'});const d=await socio(`/rentals/${encodeURIComponent(o.provider_order_id)}/cancel`,{method:'POST'});await refundIfNeeded(o.id);await q('UPDATE marketplace_orders SET provider_payload=$1,updated_at=now() WHERE id=$2',[d?.rental||d,o.id]);const w=(await q('SELECT balance_kobo FROM wallets WHERE user_id=$1',[req.user.id])).rows[0];res.json({ok:true,refunded:Number(o.amount_kobo)/100,walletBalance:Number(w?.balance_kobo||0)/100,message:'Rental cancelled and wallet refunded.'});}catch(e){res.status(e.status===409?409:502).json({error:e.message||'Could not cancel rental'});}});
+  app.post('/api/marketplace/orders/:id/cancel',auth,async(req,res)=>{try{const o=(await q('SELECT * FROM marketplace_orders WHERE id=$1 AND user_id=$2',[req.params.id,req.user.id])).rows[0];if(!o)return res.status(404).json({error:'Order not found'});if(o.category!=='sms'||!o.provider_order_id)return res.status(400).json({error:'This order cannot be cancelled here'});if(o.refund_credited)return res.json({ok:true,refunded:Number(o.amount_kobo)/100,message:'This order was already refunded.'});const d=await socio(`/rentals/${encodeURIComponent(o.provider_order_id)}/cancel`,{method:'POST'});await refundIfNeeded(o.id);await q('UPDATE marketplace_orders SET provider_payload=$1,updated_at=now() WHERE id=$2',[d?.rental||d,o.id]);const w=(await q('SELECT balance_kobo FROM users WHERE id=$1',[req.user.id])).rows[0];res.json({ok:true,refunded:Number(o.amount_kobo)/100,walletBalance:Number(w?.balance_kobo||0)/100,message:'Rental cancelled and wallet refunded.'});}catch(e){res.status(e.status===409?409:502).json({error:e.message||'Could not cancel rental'});}});
 
   app.post('/api/marketplace/webhooks/paystack',async(req,res)=>{const signature=req.headers['x-paystack-signature'];if(!signature||!process.env.PAYSTACK_SECRET_KEY)return res.status(401).json({error:'Webhook authentication unavailable'});const expected=crypto.createHmac('sha512',process.env.PAYSTACK_SECRET_KEY).update(req.rawBody||JSON.stringify(req.body)).digest('hex');if(!timingSafe(signature,expected))return res.status(401).json({error:'Invalid webhook signature'});res.sendStatus(200);});
 }
