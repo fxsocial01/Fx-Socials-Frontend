@@ -44,7 +44,8 @@ export function registerMarketplaceRoutes({app,pool,auth,admin}) {
     const d=await socio(`/rentals/${encodeURIComponent(order.provider_order_id)}`), rental=d?.rental;
     if(!rental) return order;
     const ps=String(rental.status||'').toLowerCase();
-    const next=ps==='received'||ps==='completed'?'completed':ps==='cancelled'||ps==='expired'?'refunded':ps==='waiting'?'active':order.status;
+    const providerRefunded=Boolean(rental.refunded||rental.refunded_at||ps==='refunded');
+    const next=providerRefunded||ps==='cancelled'||ps==='expired'?'refunded':ps==='received'||ps==='completed'?'completed':ps==='waiting'?'active':order.status;
     if(next==='refunded' && !order.refund_credited) await refundIfNeeded(order.id);
     else await q('UPDATE marketplace_orders SET status=$1,provider_payload=$2,updated_at=now() WHERE id=$3',[next,rental,order.id]);
     return {...order,status:next,provider_payload:rental,refund_credited:next==='refunded'||order.refund_credited};
