@@ -14,10 +14,11 @@ function payload(action, params = {}) {
   });
 }
 
-async function request(baseUrl, body, apiKey, useBearer) {
+async function request(baseUrl, apiKey, action, params, useBearer) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const body = payload(action, params);
     const headers = {
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept: 'application/json',
@@ -37,38 +38,45 @@ async function request(baseUrl, body, apiKey, useBearer) {
 }
 
 async function call(action, params = {}) {
-  const apiKey = marketplaceConfig.smm.apiKey;
+  const apiKey = String(marketplaceConfig.smm.apiKey || '').trim();
   if (!apiKey) throw Object.assign(new Error('SMM provider is not configured on the server. Add SMM_API_KEY in Render.'), { status: 503 });
 
-  let lastInvalid = null;
+  let lastError = null;
   for (const baseUrl of providerUrls()) {
-    // SMM Panel Nigeria documents both Bearer authentication and the traditional key POST field.
-    // Try Bearer first because it avoids proxies rewriting the key field, then fall back to form auth.
-    for (const useBearer of [true, false]) {
+    // The provider documents form-encoded `key` authentication, so use that first.
+    // Bearer is retained as a compatibility fallback.
+    for (const useBearer of [false, true]) {
       try {
-        const { response, data } = await request(baseUrl, payload(action, params), apiKey, useBearer);
+        const { response, data } = await request(baseUrl, apiKey, action, params, useBearer);
         if (response.ok && data && typeof data === 'object') {
-          if (data.error) {
-            throw Object.assign(new Error(String(data.error)), { status: response.status || 502 });
-          }
+          if (data.error) throw Object.assign(new Error(String(data.error)), { status: response.status || 502 });
           return data;
         }
-        if (!response.ok && data?.error) {
+
+        if (data?.error) {
           throw Object.assign(new Error(String(data.error)), { status: response.status || 502 });
         }
-        lastInvalid = new Error(`SMM provider returned ${response.status} HTML/non-JSON at ${baseUrl}.`);
-      } catch (error) {
-        if (error?.name === 'AbortError') {
-          lastInvalid = Object.assign(new Error('SMM provider is taking longer than expected. Please retry availability.'), { status: 504 });
+
+        if (response.status === 401 || response.status === 403) {
+          lastError = Object.assign(
+            new Error('SMM provider rejected the API credentials (HTTP ' + response.status + '). Check that the SMM_API_KEY in Render is a valid active API key from SMM Panel Nigeria and that API access is enabled for the account.'),
+            { status: 502, providerStatus: response.status }
+          );
           continue;
         }
-        if (error?.status && error.status !== 502 && error.status !== 503 && error.status !== 504) throw error;
-        lastInvalid = error;
+
+        lastError = Object.assign(new Error(`SMM provider returned ${response.status} non-JSON at ${baseUrl}.`), { status: 502, providerStatus: response.status });
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          lastError = Object.assign(new Error('SMM provider is taking longer than expected. Please retry availability.'), { status: 504 });
+          continue;
+        }
+        lastError = error;
       }
     }
   }
 
-  throw Object.assign(lastInvalid || new Error('SMM provider is unavailable.'), { status: lastInvalid?.status || 502 });
+  throw lastError || Object.assign(new Error('SMM provider is unavailable.'), { status: 502 });
 }
 
 export const smm = {
