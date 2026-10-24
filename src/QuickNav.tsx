@@ -10,12 +10,6 @@ export default function QuickNav(){
   ['how','How it works'],
   ['dashboard','My account'],
  ];
- let isAdmin=false;
- try{
-  const u=JSON.parse(localStorage.getItem('fxs-user')||'null');
-  isAdmin=String(u?.role||'').toLowerCase()==='admin';
- }catch{}
- if(isAdmin) items.push(['admin','Admin']);
  return <nav className="quick-nav" aria-label="FX Socials main menu">
   {items.map(([path,label])=><button key={path} onClick={()=>go(path)}>{label}</button>)}
  </nav>;
