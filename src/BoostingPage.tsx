@@ -41,7 +41,7 @@ export default function BoostingPage(){
       const text=String(s.name||'').toLowerCase();
       const matchesPlatform=!platform||text.includes(platform.toLowerCase())||(platform==='X'&&/twitter|tweet| x /.test(` ${text} `));
       return matchesPlatform&&(!q||text.includes(q));
-    });
+    }).sort((a,b)=>Number(a.pricePer1000||0)-Number(b.pricePer1000||0));
   },[services,platform,search]);
 
   const choosePlatform=(p:string)=>{setPlatform(p);setSelected(null);setSearch('');};
