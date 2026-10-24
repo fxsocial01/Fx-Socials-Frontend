@@ -44,7 +44,8 @@ async function servicesFor(provider){
     const rate=Number(firstValue(s,['rate','price','cost','price_per_1000','pricePer1000'],0));
     const min=Number(firstValue(s,['min','minimum','min_quantity','minQuantity'],1));
     const max=Number(firstValue(s,['max','maximum','max_quantity','maxQuantity'],Number.MAX_SAFE_INTEGER));
-    return {id:encodedService(provider,id),provider,providerName:configs[provider].label,providerServiceId:id,name:String(firstValue(s,['name','title'],`Service ${id}`)),category:String(firstValue(s,['category','category_name'],'')).trim(),type:String(firstValue(s,['type','service_type'],'')).trim(),description:String(firstValue(s,['description','details'],'')).trim(),providerRate:rate,pricePer1000:retailFromRate(rate),min,max,refill:Boolean(s.refill??s.refillable??false),cancel:Boolean(s.cancel??s.cancellable??false)};
+    const encoded=encodedService(provider,id);
+    return {id:encoded,service:encoded,provider,providerName:configs[provider].label,providerServiceId:id,name:String(firstValue(s,['name','title'],`Service ${id}`)),category:String(firstValue(s,['category','category_name'],'')).trim(),type:String(firstValue(s,['type','service_type'],'')).trim(),description:String(firstValue(s,['description','details'],'')).trim(),providerRate:rate,rate,price:rate,pricePer1000:retailFromRate(rate),min,max,refill:Boolean(s.refill??s.refillable??false),cancel:Boolean(s.cancel??s.cancellable??false)};
   }).filter(s=>s.providerServiceId&&s.providerRate>0&&s.min>0&&s.max>=s.min);
 }
 
