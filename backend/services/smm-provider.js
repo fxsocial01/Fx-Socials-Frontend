@@ -1,6 +1,6 @@
 import { marketplaceConfig } from './marketplace-config.js';
 
-const timeoutMs = Number(process.env.SMM_PROVIDER_TIMEOUT_MS || 20000);
+const timeoutMs = Number(process.env.SMM_PROVIDER_TIMEOUT_MS || 30000);
 
 async function call(action, params = {}) {
   const { apiKey, baseUrl } = marketplaceConfig.smm;
@@ -17,12 +17,13 @@ async function call(action, params = {}) {
     });
     const text = await response.text();
     let data;
-    try { data = JSON.parse(text); } catch { data = { error: text }; }
+    try { data = JSON.parse(text); } catch { data = null; }
     if (!response.ok) throw Object.assign(new Error(data?.error || data?.message || `SMM provider request failed (${response.status})`), { status: response.status });
+    if (!data || typeof data !== 'object') throw Object.assign(new Error('SMM provider returned an invalid response. Check the provider API URL on Render.'), { status: 502 });
     if (data?.error) throw Object.assign(new Error(String(data.error)), { status: 502 });
     return data;
   } catch (e) {
-    if (e?.name === 'AbortError') throw Object.assign(new Error('Boosting provider is taking longer than expected. Please retry.'), { status: 504 });
+    if (e?.name === 'AbortError') throw Object.assign(new Error('SMM provider is taking longer than expected. Please retry availability.'), { status: 504 });
     throw e;
   } finally { clearTimeout(timer); }
 }
