@@ -8,7 +8,6 @@ import './admin-access';
 import './dashboard-polish';
 import './customer-ui';
 import './boosting-polish';
-import './us-number-servers';
 
 const root = createRoot(document.getElementById('root')!);
 root.render(<StrictMode><AppFixed /></StrictMode>);
