@@ -19,13 +19,32 @@ async function request(config, action, params={}, {idempotencyKey}={}) {
   if(!config.apiKey) throw errorFor(`${config.label} is not configured on the server.`,503,{provider:config.name,code:'PROVIDER_NOT_CONFIGURED'});
   const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),timeoutMs);
   try {
-    const headers={Accept:'application/json','User-Agent':'FX-Socials/1.0'}; let body;
-    if(config.bearer){headers.Authorization=`Bearer ${config.apiKey}`;headers['Content-Type']='application/json';body=JSON.stringify({action,...params});}
-    else {headers['Content-Type']='application/x-www-form-urlencoded';body=new URLSearchParams({action,key:config.apiKey,...params});}
+    const headers={Accept:'application/json','User-Agent':'Mozilla/5.0 (compatible; FX-Socials/1.0; +https://fxsocials.top)','Cache-Control':'no-cache'};
+    let body;
+    if(config.bearer){
+      headers.Authorization=`Bearer ${config.apiKey}`;
+      headers['Content-Type']='application/json';
+      body=JSON.stringify({action,...params});
+    } else {
+      headers.Authorization=`Bearer ${config.apiKey}`;
+      headers['Content-Type']='application/json';
+      headers.Origin='https://www.smmpanel.ng';
+      headers.Referer='https://www.smmpanel.ng/';
+      body=JSON.stringify({action,key:config.apiKey,...params});
+    }
     if(idempotencyKey && config.name===P2) headers['Idempotency-Key']=idempotencyKey;
-    const response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers,body});
-    const text=await response.text(); let data=null; try{data=JSON.parse(text)}catch{}
-    if(!response.ok)throw errorFor(data?.error||data?.message||`${config.label} returned HTTP ${response.status}`,response.status,{provider:config.name,providerStatus:response.status,retryable:Boolean(data?.retryable),code:data?.code});
+    let response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers,body});
+    let text=await response.text(); let data=null; try{data=JSON.parse(text)}catch{}
+    if(!response.ok && !config.bearer && [400,401,403,415].includes(response.status)){
+      const fallbackHeaders={Accept:'application/json','User-Agent':'Mozilla/5.0 (compatible; FX-Socials/1.0)','Content-Type':'application/x-www-form-urlencoded','Origin':'https://www.smmpanel.ng','Referer':'https://www.smmpanel.ng/'};
+      const fallbackBody=new URLSearchParams({action,key:config.apiKey,...params});
+      response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers:fallbackHeaders,body:fallbackBody});
+      text=await response.text(); data=null; try{data=JSON.parse(text)}catch{}
+    }
+    if(!response.ok){
+      const html=!data&&/<(?:!doctype|html|head|body)\b/i.test(text);
+      throw errorFor(data?.error||data?.message||(html?`${config.label} returned HTML/non-JSON (HTTP ${response.status}).`:`${config.label} returned HTTP ${response.status}`),response.status,{provider:config.name,providerStatus:response.status,retryable:Boolean(data?.retryable),code:data?.code,html});
+    }
     if(!data||typeof data!=='object')throw errorFor(`${config.label} returned an invalid response.`,502,{provider:config.name});
     if(data.error)throw errorFor(data.error,response.status||502,{provider:config.name,retryable:Boolean(data.retryable),code:data.code});
     return data;
@@ -63,7 +82,7 @@ async function servicesFor(provider){
 
 async function allServices(){
   const results=await Promise.allSettled([servicesFor(P1),servicesFor(P2)]); const services=[],errors=[];
-  results.forEach((r,i)=>{const provider=i===0?P1:P2;if(r.status==='fulfilled')services.push(...r.value);else errors.push({provider,message:r.reason?.message||'Unavailable'});});
+  results.forEach((r,i)=>{const provider=i===0?P1:P2;if(r.status==='fulfilled')services.push(...r.value);else errors.push({provider,message:r.reason?.message||'Unavailable',status:r.reason?.status||502,code:r.reason?.code||'PROVIDER_ERROR'});});
   if(!services.length)throw errorFor('Both boosting providers are currently unavailable.',502,{providerErrors:errors});
   return {services,errors};
 }
