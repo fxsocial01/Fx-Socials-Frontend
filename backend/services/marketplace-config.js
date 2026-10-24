@@ -13,12 +13,6 @@ export const marketplaceConfig = {
     webhookSecret: process.env.SMS_PROVIDER_WEBHOOK_SECRET
   },
   smm: {
-    provider: process.env.SMM_PROVIDER || 'smm-panel-ng',
-    baseUrl: (process.env.SMM_PROVIDER_1_API_URL || process.env.SMM_API_URL || 'https://app.smmpanel.ng/api/v2').replace(/\/$/, ''),
-    apiKey: String(process.env.SMM_PROVIDER_1_API_KEY || process.env.SMM_API_KEY || '').trim(),
-    markupPercent: Number(process.env.SMM_MARKUP_PERCENT || 40)
-  },
-  smmBackup: {
     provider: process.env.SMM_PROVIDER_2 || 'smm-africa',
     baseUrl: (process.env.SMM_PROVIDER_2_API_URL || 'https://smm.africa/api/v3').replace(/\/$/, ''),
     apiKey: String(process.env.SMM_PROVIDER_2_API_KEY || '').trim(),
