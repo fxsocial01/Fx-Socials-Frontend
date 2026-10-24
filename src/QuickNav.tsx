@@ -1,5 +1,10 @@
 export default function QuickNav(){
  const go=(path:string)=>{location.hash=`#/${path}`};
+ let isAdmin=false;
+ try{
+  const saved=JSON.parse(localStorage.getItem('fxs-user')||'null');
+  isAdmin=String(saved?.role||'').toLowerCase()==='admin' && String(saved?.email||'').toLowerCase()==='yasiyrshehu@gmail.com';
+ }catch{}
  const items=[
   ['marketplace','Buy accounts'],
   ['services','Buy number'],
@@ -9,6 +14,7 @@ export default function QuickNav(){
   ['support','Customer support'],
   ['how','How it works'],
   ['dashboard','My account'],
+  ...(isAdmin?[['admin','Admin']]:[]),
  ];
  return <nav className="quick-nav" aria-label="FX Socials main menu">
   {items.map(([path,label])=><button key={path} onClick={()=>go(path)}>{label}</button>)}
