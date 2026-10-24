@@ -1,94 +1,76 @@
 import { marketplaceConfig } from './marketplace-config.js';
 
 const timeoutMs = Number(process.env.SMM_PROVIDER_TIMEOUT_MS || 30000);
+const P1 = 'smm-panel-ng';
+const P2 = 'smm-africa';
 
-function providerUrls() {
-  const configured = String(marketplaceConfig.smm.baseUrl || '').replace(/\/$/, '');
-  return [...new Set([configured, 'https://app.smmpanel.ng/api/v2'].filter(Boolean))];
-}
+const configs = {
+  [P1]: { name: P1, label: 'SMM Panel Nigeria', baseUrl: String(marketplaceConfig.smm.baseUrl || 'https://app.smmpanel.ng/api/v2').replace(/\/$/, ''), apiKey: String(marketplaceConfig.smm.apiKey || '').trim(), bearer: false },
+  [P2]: { name: P2, label: 'SMM Africa', baseUrl: String(marketplaceConfig.smmBackup?.baseUrl || 'https://smm.africa/api/v3').replace(/\/$/, ''), apiKey: String(marketplaceConfig.smmBackup?.apiKey || '').trim(), bearer: true }
+};
 
-function payload(action, params = {}) {
-  return new URLSearchParams({
-    action,
-    ...Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''))
-  });
-}
+const encodedService = (provider, id) => `${provider}:${String(id)}`;
+const decodeService = value => { const raw=String(value??''); const i=raw.indexOf(':'); return i>0&&configs[raw.slice(0,i)]?{provider:raw.slice(0,i),id:raw.slice(i+1)}:{provider:P1,id:raw}; };
+const errorFor = (message,status=502,extra={}) => Object.assign(new Error(String(message||'SMM provider request failed')),{status,...extra});
 
-async function request(baseUrl, apiKey, action, params, useBearer) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+async function request(config, action, params={}, {idempotencyKey}={}) {
+  if(!config.apiKey) throw errorFor(`${config.label} is not configured on the server.`,503);
+  const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),timeoutMs);
   try {
-    const body = payload(action, params);
-    const headers = {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: 'application/json',
-      'User-Agent': 'FX-Socials/1.0'
-    };
-    if (useBearer) headers.Authorization = `Bearer ${apiKey}`;
-    else body.set('key', apiKey);
+    const headers={Accept:'application/json','User-Agent':'FX-Socials/1.0'}; let body;
+    if(config.bearer){headers.Authorization=`Bearer ${config.apiKey}`;headers['Content-Type']='application/json';body=JSON.stringify({action,...params});}
+    else {headers['Content-Type']='application/x-www-form-urlencoded';body=new URLSearchParams({action,key:config.apiKey,...params});}
+    if(idempotencyKey)headers['Idempotency-Key']=idempotencyKey;
+    const response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers,body});
+    const text=await response.text(); let data=null; try{data=JSON.parse(text)}catch{}
+    if(!response.ok)throw errorFor(data?.error||data?.message||`${config.label} returned HTTP ${response.status}`,response.status,{provider:config.name,providerStatus:response.status,retryable:Boolean(data?.retryable),code:data?.code});
+    if(!data||typeof data!=='object')throw errorFor(`${config.label} returned an invalid response.`,502,{provider:config.name});
+    if(data.error)throw errorFor(data.error,response.status||502,{provider:config.name,retryable:Boolean(data.retryable),code:data.code});
+    return data;
+  }catch(e){if(e?.name==='AbortError')throw errorFor(`${config.label} timed out before the result was confirmed.`,504,{provider:config.name,ambiguous:true});throw e;}
+  finally{clearTimeout(timer)}
+}
 
-    const response = await fetch(baseUrl, { method: 'POST', signal: controller.signal, headers, body });
-    const text = await response.text();
-    let data = null;
-    try { data = JSON.parse(text); } catch {}
-    return { response, data, text };
-  } finally {
-    clearTimeout(timer);
+const safeFailover = e => { if(e?.ambiguous)return false; const s=Number(e?.status||0),c=String(e?.code||'').toUpperCase(); if([400,401,403,423].includes(s)||c==='INVALID_API_KEY')return false; return s===429||s>=500||s===0||Boolean(e?.retryable); };
+const callProvider=(provider,action,params={},options={})=>request(configs[provider],action,params,options);
+
+async function servicesFor(provider){
+  const d=await callProvider(provider,'services'); const list=Array.isArray(d)?d:(Array.isArray(d.services)?d.services:[]);
+  return list.map(s=>{const id=String(s.service??s.id??'').trim(),rate=Number(s.rate??s.price??0);return {id:encodedService(provider,id),provider,providerName:configs[provider].label,providerServiceId:id,name:String(s.name||`Service ${id}`),category:String(s.category||'').trim(),type:String(s.type||'').trim(),description:String(s.description||'').trim(),providerRate:rate,pricePer1000:retailFromRate(rate),min:Number(s.min||0),max:Number(s.max||0),refill:Boolean(s.refill),cancel:Boolean(s.cancel)}}).filter(s=>s.providerServiceId&&s.providerRate>0&&s.min>0&&s.max>=s.min);
+}
+
+async function allServices(){
+  const results=await Promise.allSettled([servicesFor(P1),servicesFor(P2)]); const services=[],errors=[];
+  results.forEach((r,i)=>{const provider=i===0?P1:P2;if(r.status==='fulfilled')services.push(...r.value);else errors.push({provider,message:r.reason?.message||'Unavailable'});});
+  if(!services.length)throw errorFor('Both boosting providers are currently unavailable.',502,{providerErrors:errors});
+  return {services,errors};
+}
+
+async function add({service,link,quantity}){
+  const decoded=decodeService(service),requested=decoded.provider,fallback=requested===P1?P2:P1;
+  const key=`fxs-${Date.now()}-${Math.random().toString(36).slice(2,12)}`;
+  try{
+    const data=await callProvider(requested,'add',{service:decoded.id,link,quantity:String(quantity),idempotency_key:key},{idempotencyKey:key});
+    if(data?.order===undefined||data?.order===null||data?.order==='')throw errorFor(`${configs[requested].label} did not return an order ID.`,502,{provider:requested});
+    return {...data,order:`${requested}:${String(data.order)}`,provider:requested,providerName:configs[requested].label};
+  }catch(e){
+    if(!safeFailover(e)||!configs[fallback].apiKey)throw e;
+    const fallbackKey=`fxs-${Date.now()}-${Math.random().toString(36).slice(2,12)}`;
+    const data=await callProvider(fallback,'add',{service:decoded.id,link,quantity:String(quantity),idempotency_key:fallbackKey},{idempotencyKey:fallbackKey});
+    if(data?.order===undefined||data?.order===null||data?.order==='')throw errorFor(`${configs[fallback].label} did not return an order ID.`,502,{provider:fallback});
+    return {...data,order:`${fallback}:${String(data.order)}`,provider:fallback,providerName:configs[fallback].label,failedOverFrom:requested};
   }
 }
 
-async function call(action, params = {}) {
-  const apiKey = String(marketplaceConfig.smm.apiKey || '').trim();
-  if (!apiKey) throw Object.assign(new Error('SMM provider is not configured on the server. Add SMM_API_KEY in Render.'), { status: 503 });
+async function status(order){const raw=String(order??''),d=decodeService(raw),providerOrder=raw.startsWith(`${d.provider}:`)?raw.slice(d.provider.length+1):raw;const data=await callProvider(d.provider,'status',d.provider===P2?{orders:[providerOrder]}:{order:providerOrder});return d.provider===P2&&Array.isArray(data.orders)?(data.orders[0]||{}):data;}
 
-  let lastError = null;
-  for (const baseUrl of providerUrls()) {
-    // The provider documents form-encoded `key` authentication, so use that first.
-    // Bearer is retained as a compatibility fallback.
-    for (const useBearer of [false, true]) {
-      try {
-        const { response, data } = await request(baseUrl, apiKey, action, params, useBearer);
-        if (response.ok && data && typeof data === 'object') {
-          if (data.error) throw Object.assign(new Error(String(data.error)), { status: response.status || 502 });
-          return data;
-        }
-
-        if (data?.error) {
-          throw Object.assign(new Error(String(data.error)), { status: response.status || 502 });
-        }
-
-        if (response.status === 401 || response.status === 403) {
-          lastError = Object.assign(
-            new Error('SMM provider rejected the API credentials (HTTP ' + response.status + '). Check that the SMM_API_KEY in Render is a valid active API key from SMM Panel Nigeria and that API access is enabled for the account.'),
-            { status: 502, providerStatus: response.status }
-          );
-          continue;
-        }
-
-        lastError = Object.assign(new Error(`SMM provider returned ${response.status} non-JSON at ${baseUrl}.`), { status: 502, providerStatus: response.status });
-      } catch (error) {
-        if (error?.name === 'AbortError') {
-          lastError = Object.assign(new Error('SMM provider is taking longer than expected. Please retry availability.'), { status: 504 });
-          continue;
-        }
-        lastError = error;
-      }
-    }
-  }
-
-  throw lastError || Object.assign(new Error('SMM provider is unavailable.'), { status: 502 });
-}
-
-export const smm = {
-  services: () => call('services'),
-  add: ({ service, link, quantity }) => call('add', { service, link, quantity: String(quantity) }),
-  status: order => call('status', { order: String(order) }),
-  refill: order => call('refill', { order: String(order) })
+export const smm={
+  services:allServices,
+  add,
+  status,
+  refill:async order=>{const raw=String(order??''),d=decodeService(raw),providerOrder=raw.startsWith(`${d.provider}:`)?raw.slice(d.provider.length+1):raw;return callProvider(d.provider,'refill',{order:providerOrder});}
 };
 
-export const retailFromRate = providerRate => {
-  const rate = Number(providerRate || 0);
-  return Math.round(rate * (1 + marketplaceConfig.smm.markupPercent / 100) * 100) / 100;
-};
-
-export const retailTotal = (providerRate, quantity) => Math.round(retailFromRate(providerRate) * (Number(quantity) / 1000) * 100) / 100;
+export const retailFromRate=providerRate=>{const rate=Number(providerRate||0);return Math.round(rate*(1+Number(marketplaceConfig.smm.markupPercent||40)/100)*100)/100;};
+export const retailTotal=(providerRate,quantity)=>Math.round(retailFromRate(providerRate)*(Number(quantity)/1000)*100)/100;
+export const smmProviders=()=>Object.values(configs).map(c=>({id:c.name,name:c.label,configured:Boolean(c.apiKey),markupPercent:Number(marketplaceConfig.smm.markupPercent||40)}));
