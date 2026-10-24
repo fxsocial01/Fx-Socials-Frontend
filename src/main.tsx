@@ -10,6 +10,6 @@ import './payment-fix';
 
 const route=()=>location.hash.replace('#/','').split('?')[0];
 const root=createRoot(document.getElementById('root')!);
-const render=()=>{const r=route();root.render(<StrictMode>{r==='services'?<ServicesPage/>:r==='boosting'?<BoostingPage/>:r==='numbers'?<NumberServicesPage/>:<App/>}</StrictMode>)};
+const render=()=>{const r=route();root.render(<StrictMode>{r==='services'||r==='numbers'?<NumberServicesPage/>:r==='boosting'?<BoostingPage/>:<App/>}</StrictMode>)};
 render();
 addEventListener('hashchange',render);
