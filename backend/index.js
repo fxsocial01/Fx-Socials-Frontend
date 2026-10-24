@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import pg from 'pg';
 import crypto from 'crypto';
 import { registerMarketplaceRoutes } from './services/marketplace-routes.js';
+import { registerFleexaRoutes } from './services/fleexa-routes.js';
 import { registerManualTopupRoutes } from './manual-topups.js';
 const {Pool}=pg;
 const app=express();
@@ -60,5 +61,6 @@ app.post('/api/admin/products/delete',auth,admin,async(req,res)=>{await q("UPDAT
 app.post('/api/admin/users/add-funds',auth,admin,async(req,res)=>{const a=kobo(req.body?.amountNaira);await q('UPDATE users SET balance_kobo=balance_kobo+$1 WHERE id=$2',[a,req.body?.userId]);await q('INSERT INTO wallet_audit(admin_id,user_id,amount_kobo,type,reason) VALUES($1,$2,$3,$4,$5)',[req.user.id,req.body?.userId,a,'add_funds','Admin wallet adjustment']);res.json({ok:true})});
 app.post('/api/admin/users/refund',auth,admin,async(req,res)=>{const a=kobo(req.body?.amountNaira);await q('UPDATE users SET balance_kobo=balance_kobo+$1 WHERE id=$2',[a,req.body?.userId]);await q('INSERT INTO wallet_audit(admin_id,user_id,amount_kobo,type,reason) VALUES($1,$2,$3,$4,$5)',[req.user.id,req.body?.userId,a,'refund','Admin refund']);res.json({ok:true})});
 registerMarketplaceRoutes({app,pool,auth,admin});
+registerFleexaRoutes({app,pool,auth});
 app.listen(PORT,'0.0.0.0',()=>console.log(`Fx Socials API listening on ${PORT}`));
 init().catch(e=>{console.error(e);process.exit(1)});
