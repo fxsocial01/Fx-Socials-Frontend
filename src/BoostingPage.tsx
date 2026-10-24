@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 const API_BASE=(import.meta as any).env.VITE_API_BASE_URL||'https://fx-socials-api.onrender.com';
 const money=(n:number)=>`₦${Number(n||0).toLocaleString('en-NG')}`;
@@ -29,11 +29,22 @@ export default function BoostingPage(){
   const [loading,setLoading]=useState(true);
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState('');
+  const orderFormRef=useRef<HTMLElement|null>(null);
+  const linkInputRef=useRef<HTMLInputElement|null>(null);
 
   const load=async()=>{try{setLoading(true);const d=await req('/api/smm/services');setServices(d.services||[]);}catch(e:any){setMessage(e.message||'Boosting services are temporarily unavailable.')}finally{setLoading(false)}};
   const loadWallet=async()=>{if(!token())return;try{const d=await req('/api/me/wallet','POST',{sessionToken:token()});setWallet(Number(d.wallet?.balance||0));}catch{}};
   const loadOrders=async()=>{if(!token())return;try{const d=await req('/api/smm/orders');setOrders(d.orders||[]);}catch{}};
   useEffect(()=>{void load();void loadWallet();void loadOrders()},[]);
+
+  useEffect(()=>{
+    if(!selected)return;
+    const timer=window.setTimeout(()=>{
+      orderFormRef.current?.scrollIntoView({behavior:'smooth',block:'start'});
+      window.setTimeout(()=>linkInputRef.current?.focus(),450);
+    },80);
+    return()=>window.clearTimeout(timer);
+  },[selected]);
 
   const filtered=useMemo(()=>{
     const q=search.trim().toLowerCase();
@@ -45,6 +56,7 @@ export default function BoostingPage(){
   },[services,platform,search]);
 
   const choosePlatform=(p:string)=>{setPlatform(p);setSelected(null);setSearch('');};
+  const chooseService=(s:any)=>{setSelected(s);setQuantity(String(s.min||''));};
   const validQty=selected&&Number(quantity)>=Number(selected.min)&&Number(quantity)<=Number(selected.max);
   const total=selected&&quantity?Number(selected.pricePer1000||0)*Number(quantity)/1000:0;
   const placeOrder=async()=>{
@@ -78,13 +90,13 @@ export default function BoostingPage(){
       <section style={{marginTop:18}}>
         {loading?<div style={{padding:28,textAlign:'center',color:'#888'}}>Loading services…</div>:filtered.length?<div style={{display:'grid',gap:10}}>{filtered.map(s=>{
           const active=selected?.id===s.id;
-          return <button key={s.id} onClick={()=>setSelected(s)} style={{textAlign:'left',border:active?'2px solid #fff':'1px solid #292929',background:active?'#171717':'#0d0d0d',color:'#fff',borderRadius:16,padding:16,cursor:'pointer'}}><div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center'}}><div><div style={{fontSize:16,fontWeight:800}}>{s.name}</div><div style={{fontSize:12,color:'#777',marginTop:5}}>From {money(s.pricePer1000)} per 1,000</div></div><span style={{fontSize:13,fontWeight:800}}>{active?'✓ Selected':'Tap to choose'}</span></div></button>;
+          return <button key={s.id} onClick={()=>chooseService(s)} style={{textAlign:'left',border:active?'2px solid #fff':'1px solid #292929',background:active?'#171717':'#0d0d0d',color:'#fff',borderRadius:16,padding:16,cursor:'pointer'}}><div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center'}}><div><div style={{fontSize:16,fontWeight:800}}>{s.name}</div><div style={{fontSize:12,color:'#777',marginTop:5}}>From {money(s.pricePer1000)} per 1,000</div></div><span style={{fontSize:13,fontWeight:800}}>{active?'✓ Selected':'Tap to choose'}</span></div></button>;
         })}</div>:<div style={{padding:28,textAlign:'center',border:'1px solid #292929',borderRadius:16,color:'#888'}}>No {platform} services match that search.</div>}
       </section>
 
-      {selected&&<section style={{marginTop:20,border:'1px solid #292929',background:'#0d0d0d',borderRadius:18,padding:18}}>
+      {selected&&<section ref={orderFormRef} style={{scrollMarginTop:18,marginTop:20,border:'1px solid #292929',background:'#0d0d0d',borderRadius:18,padding:18}}>
         <div style={{fontSize:12,color:'#888'}}>YOU CHOSE</div><div style={{fontSize:20,fontWeight:900,marginTop:5}}>{selected.name}</div>
-        <label style={{display:'block',marginTop:18,fontSize:13,color:'#aaa'}}>Public post / profile link<input value={link} onChange={e=>setLink(e.target.value)} placeholder="https://instagram.com/..." style={{display:'block',width:'100%',marginTop:7,height:48,borderRadius:12,border:'1px solid #333',background:'#151515',color:'#fff',padding:'0 13px'}}/></label>
+        <label style={{display:'block',marginTop:18,fontSize:13,color:'#aaa'}}>Public post / profile link<input ref={linkInputRef} value={link} onChange={e=>setLink(e.target.value)} placeholder="https://instagram.com/..." style={{display:'block',width:'100%',marginTop:7,height:48,borderRadius:12,border:'1px solid #333',background:'#151515',color:'#fff',padding:'0 13px'}}/></label>
         <label style={{display:'block',marginTop:14,fontSize:13,color:'#aaa'}}>Quantity<input type="number" min={selected.min} max={selected.max} value={quantity} onChange={e=>setQuantity(e.target.value.replace(/\D/g,''))} placeholder={`${selected.min} - ${selected.max}`} style={{display:'block',width:'100%',marginTop:7,height:48,borderRadius:12,border:'1px solid #333',background:'#151515',color:'#fff',padding:'0 13px'}}/></label>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:18,paddingTop:16,borderTop:'1px solid #242424'}}><span style={{color:'#888'}}>Your price</span><strong style={{fontSize:24}}>{money(total)}</strong></div>
         <button disabled={busy||!validQty||!link.trim()} onClick={placeOrder} style={{width:'100%',height:52,marginTop:14,border:0,borderRadius:13,background:'#fff',color:'#050505',fontWeight:900,cursor:'pointer',opacity:busy||!validQty||!link.trim()?0.5:1}}>{busy?'Placing order…':`Boost now · ${money(total)}`}</button>
