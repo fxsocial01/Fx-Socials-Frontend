@@ -19,28 +19,27 @@ async function request(config, action, params={}, {idempotencyKey}={}) {
   if(!config.apiKey) throw errorFor(`${config.label} is not configured on the server.`,503,{provider:config.name,code:'PROVIDER_NOT_CONFIGURED'});
   const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),timeoutMs);
   try {
-    const headers={Accept:'application/json','User-Agent':'Mozilla/5.0 (compatible; FX-Socials/1.0; +https://fxsocials.top)','Cache-Control':'no-cache'};
-    let body;
+    const payload={action,...params};
+    let response;
     if(config.bearer){
-      headers.Authorization=`Bearer ${config.apiKey}`;
-      headers['Content-Type']='application/json';
-      body=JSON.stringify({action,...params});
+      const headers={Accept:'application/json','User-Agent':'Mozilla/5.0 (compatible; FX-Socials/1.0; +https://fxsocials.top)','Content-Type':'application/json',Authorization:`Bearer ${config.apiKey}`};
+      if(idempotencyKey)headers['Idempotency-Key']=idempotencyKey;
+      response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers,body:JSON.stringify(payload)});
     } else {
-      headers.Authorization=`Bearer ${config.apiKey}`;
-      headers['Content-Type']='application/json';
-      headers.Origin='https://www.smmpanel.ng';
-      headers.Referer='https://www.smmpanel.ng/';
-      body=JSON.stringify({action,key:config.apiKey,...params});
+      // Provider 1 documents form-encoded POST as the canonical API format.
+      // Keep the API key server-side and send exactly the documented key/action fields.
+      const headers={Accept:'application/json','User-Agent':'FX-Socials/1.0','Content-Type':'application/x-www-form-urlencoded'};
+      const body=new URLSearchParams({key:config.apiKey,...payload});
+      response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers,body});
+      if(!response.ok && [400,401,403,415].includes(response.status)){
+        const text=await response.text();
+        let data=null;try{data=JSON.parse(text)}catch{}
+        // Retry once with the provider's accepted JSON/Bearer form when the form endpoint rejects the request.
+        const jsonHeaders={Accept:'application/json','User-Agent':'FX-Socials/1.0','Content-Type':'application/json',Authorization:`Bearer ${config.apiKey}`};
+        response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers:jsonHeaders,body:JSON.stringify(payload)});
+      }
     }
-    if(idempotencyKey && config.name===P2) headers['Idempotency-Key']=idempotencyKey;
-    let response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers,body});
-    let text=await response.text(); let data=null; try{data=JSON.parse(text)}catch{}
-    if(!response.ok && !config.bearer && [400,401,403,415].includes(response.status)){
-      const fallbackHeaders={Accept:'application/json','User-Agent':'Mozilla/5.0 (compatible; FX-Socials/1.0)','Content-Type':'application/x-www-form-urlencoded','Origin':'https://www.smmpanel.ng','Referer':'https://www.smmpanel.ng/'};
-      const fallbackBody=new URLSearchParams({action,key:config.apiKey,...params});
-      response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers:fallbackHeaders,body:fallbackBody});
-      text=await response.text(); data=null; try{data=JSON.parse(text)}catch{}
-    }
+    const text=await response.text(); let data=null; try{data=JSON.parse(text)}catch{}
     if(!response.ok){
       const html=!data&&/<(?:!doctype|html|head|body)\b/i.test(text);
       throw errorFor(data?.error||data?.message||(html?`${config.label} returned HTML/non-JSON (HTTP ${response.status}).`:`${config.label} returned HTTP ${response.status}`),response.status,{provider:config.name,providerStatus:response.status,retryable:Boolean(data?.retryable),code:data?.code,html});
@@ -117,13 +116,7 @@ async function status(order){
   return data;
 }
 
-export const smm={
-  services:allServices,
-  add,
-  status,
-  refill:async order=>{const raw=String(order??''),d=decodeService(raw),providerOrder=raw.startsWith(`${d.provider}:`)?raw.slice(d.provider.length+1):raw;return callProvider(d.provider,'refill',{order:providerOrder});}
-};
-
+export const smm={services:allServices,add,status,refill:async order=>{const raw=String(order??''),d=decodeService(raw),providerOrder=raw.startsWith(`${d.provider}:`)?raw.slice(d.provider.length+1):raw;return callProvider(d.provider,'refill',{order:providerOrder});}};
 export const retailFromRate=providerRate=>{const rate=Number(providerRate||0);return Math.round(rate*(1+Number(marketplaceConfig.smm.markupPercent||40)/100)*100)/100;};
 export const retailTotal=(providerRate,quantity)=>Math.round(retailFromRate(providerRate)*(Number(quantity)/1000)*100)/100;
 export const smmProviders=()=>Object.values(configs).map(c=>({id:c.name,name:c.label,configured:Boolean(c.apiKey),currency:c.currency,usdToNgn:c.fx,markupPercent:Number(marketplaceConfig.smm.markupPercent||40)}));
