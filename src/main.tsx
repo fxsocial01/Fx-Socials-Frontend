@@ -7,6 +7,7 @@ import './payment-fix';
 import './admin-access';
 import './dashboard-polish';
 import './customer-ui';
+import './boosting-polish';
 
 const root = createRoot(document.getElementById('root')!);
 root.render(<StrictMode><AppFixed /></StrictMode>);
