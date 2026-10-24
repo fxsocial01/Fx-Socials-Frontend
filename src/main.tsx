@@ -4,6 +4,7 @@ import AppFixed from './AppFixed';
 import './index.css';
 import './admin-tools';
 import './payment-fix';
+import './admin-access';
 
 const root = createRoot(document.getElementById('root')!);
 root.render(<StrictMode><AppFixed /></StrictMode>);
