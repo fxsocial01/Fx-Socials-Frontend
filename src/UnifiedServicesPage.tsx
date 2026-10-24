@@ -1,44 +1,189 @@
-import {useEffect,useState} from 'react';
-const API=(import.meta as any).env.VITE_API_BASE_URL||'https://fx-socials-api.onrender.com';const token=()=>localStorage.getItem('fxs-session')||'';const money=(n:number)=>`₦${Number(n||0).toLocaleString('en-NG')}`;
-async function req(path:string,method='GET',body?:any){const r=await fetch(`${API}${path}`,{method,headers:{'Content-Type':'application/json',...(token()?{Authorization:`Bearer ${token()}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
-const copy=async(text:string)=>{if(!text)return;try{await navigator.clipboard.writeText(text)}catch{}};
-const value=(o:any,...keys:string[])=>{for(const k of keys){const v=k.split('.').reduce((a:any,p:string)=>a?.[p],o);if(v!==undefined&&v!==null&&String(v)!=='')return v}return ''};
-const age=(raw:any)=>{if(!raw)return '';const d=new Date(raw);if(Number.isNaN(d.getTime()))return '';const days=Math.max(0,Math.floor((Date.now()-d.getTime())/86400000));if(days===0)return 'Today';if(days===1)return '1 day ago';return `${days} days ago`};
-const completed=(o:any)=>['completed','complete','success','successful','done','finished'].includes(String(value(o,'status','state')).toLowerCase());
-export default function UnifiedServicesPage(){
- const [tab,setTab]=useState('us'),[wallet,setWallet]=useState(0),[busy,setBusy]=useState(false),[msg,setMsg]=useState('');
- const [apps,setApps]=useState<any[]>([]),[app,setApp]=useState(''),[usPrice,setUsPrice]=useState(0);
- const [otherApps,setOtherApps]=useState<any[]>([]),[otherApp,setOtherApp]=useState(''),[countries,setCountries]=useState<any[]>([]),[country,setCountry]=useState(''),[servers,setServers]=useState<any[]>([]),[server,setServer]=useState('');
- const [emails,setEmails]=useState<any[]>([]),[emailSite,setEmailSite]=useState(''),[domains,setDomains]=useState<any[]>([]),[domain,setDomain]=useState('');
- const [areas,setAreas]=useState<any[]>([]),[area,setArea]=useState(''),[rentApp,setRentApp]=useState('WhatsApp'),[months,setMonths]=useState('1');
- const [esims,setEsims]=useState<any[]>([]),[orders,setOrders]=useState<any[]>([]);
- const logged=Boolean(token());
- const loadOrders=async()=>{if(!logged)return;try{const d=await req('/api/fleexa/orders');setOrders(d.orders||[])}catch{}};
- const load=async()=>{try{const [a,o,e,r,s]=await Promise.all([req('/api/fleexa/sms/services'),req('/api/marketplace/live/sms/services'),req('/api/fleexa/email/products'),req('/api/fleexa/rent/areas'),req('/api/marketplace/live/esim/catalog')]);setApps(a.services||[]);setOtherApps(o.services||[]);setEmails(e.products||[]);setAreas(r.areas||[]);setEsims(s.products||[]);if(a.services?.[0])setApp(a.services[0].name||a.services[0].id);if(r.data?.length)setArea(r.data[0].area_code||r.data[0].id||'');}catch(e:any){setMsg(e.message)}if(logged){try{const d=await req('/api/me/wallet','POST',{sessionToken:token()});setWallet(Number(d.wallet?.balance||0));await loadOrders()}catch{}}};
- useEffect(()=>{void load()},[]);
- useEffect(()=>{if(!logged)return;const id=window.setInterval(()=>{void loadOrders()},10000);return()=>window.clearInterval(id)},[logged]);
- useEffect(()=>{if(!app||tab!=='us')return;req(`/api/fleexa/sms/prices?service=${encodeURIComponent(app)}`).then(d=>setUsPrice(Number(d.salePrice||0))).catch(e=>setMsg(e.message))},[app,tab]);
- useEffect(()=>{if(!otherApp||tab!=='other')return;req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(otherApp)}`).then(d=>{setCountries(d.countries||[]);setCountry('');setServers([]);setServer('')}).catch(e=>setMsg(e.message))},[otherApp,tab]);
- useEffect(()=>{if(!otherApp||!country||tab!=='other')return;req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(otherApp)}&country=${encodeURIComponent(country)}`).then(d=>setServers((d.servers||[]).filter((x:any)=>Number(x.stock)>0))).catch(e=>setMsg(e.message))},[otherApp,country,tab]);
- useEffect(()=>{if(!emailSite||tab!=='email')return;req(`/api/fleexa/email/domains?site=${encodeURIComponent(emailSite)}`).then(d=>{setDomains(d.domains||[]);setDomain(d.domains?.[0]?.domain||d.domains?.[0]||'')}).catch(e=>setMsg(e.message))},[emailSite,tab]);
- const login=()=>{if(!logged){location.hash='#/account';return false}return true};
- const buy=async(path:string,body:any,success:(d:any)=>string)=>{if(!login())return;setBusy(true);try{const d=await req(path,'POST',body);setWallet(Number(d.walletBalance||0));setMsg(success(d));await loadOrders()}catch(e:any){setMsg(e.message)}finally{setBusy(false)}};
- const emailPrice=Number(emails.find(x=>String(x.site||x.name)===String(emailSite))?.price_ngn||emails.find(x=>String(x.site||x.name)===String(emailSite))?.price||0)*1.4;
- const rentArea=areas.find(x=>String(x.area_code||x.id||x.name)===String(area));const rentPrice=Number(rentArea?.price_ngn||rentArea?.rate||rentArea?.price||0)*Number(months||1)*1.4;
- const tabs=[['us','🇺🇸 US Number'],['other','🌍 Other Numbers'],['email','✉️ Custom Email'],['rent','📞 Rental'],['esim','📶 eSIM']];
- return <main style={{minHeight:'100vh',background:'#050505',color:'#fff',padding:'24px 18px 70px'}}><div style={{maxWidth:980,margin:'0 auto'}}>
- <button onClick={()=>location.hash='#/home'} style={back}>← FX Socials</button><div style={{marginTop:28}}><div style={eyebrow}>FX SOCIALS SERVICES</div><h1 style={h1}>Choose what you need.</h1><p style={muted}>US numbers, other countries, custom email, rentals and eSIMs — all in one simple place.</p></div>
- {msg&&<div style={notice}>{msg}<button onClick={()=>setMsg('')} style={x}>×</button></div>}
- <div style={tabGrid}>{tabs.map(([id,label])=><button key={id} onClick={()=>setTab(id)} style={{...tabBtn,...(tab===id?activeTab:{})}}>{label}</button>)}</div>
- <section style={card}>
- {tab==='us'&&<><h2>🇺🇸 Buy US Number</h2><p style={muted}>Fleexa US verification numbers. FX Socials adds its retail markup automatically.</p><label style={label}>Choose service<select value={app} onChange={e=>setApp(e.target.value)} style={select}>{apps.map(a=><option key={a.id||a.name} value={a.name||a.id}>{a.name||a.id}</option>)}</select></label>{usPrice>0&&<div style={price}><span>FX SOCIALS PRICE</span><b>{money(usPrice)}</b><small>Provider cost hidden</small></div>}<button disabled={busy||!usPrice} onClick={()=>buy('/api/fleexa/sms/buy',{service:app},d=>`US number ${d.order?.phone||''} purchased. Waiting for its verification code.`)} style={primary}>{busy?'Processing…':`Buy US number${usPrice?` · ${money(usPrice)}`:''}`}</button></>}
- {tab==='other'&&<><h2>🌍 Buy Other Numbers</h2><p style={muted}>Other countries remain on the existing SocioSMS connection.</p><label style={label}>Service<select value={otherApp} onChange={e=>setOtherApp(e.target.value)} style={select}><option value="">Choose service</option>{otherApps.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></label><label style={label}>Country<select value={country} onChange={e=>setCountry(e.target.value)} style={select}><option value="">Choose country</option>{countries.map(c=><option key={c.country_code} value={c.country_code}>{c.flag||''} {c.country_name}</option>)}</select></label><label style={label}>Number option<select value={server} onChange={e=>setServer(e.target.value)} style={select}><option value="">Choose option</option>{servers.map(s=><option key={s.server} value={s.server}>{s.server_name||`Server ${s.server}`} · {money(s.salePrice)}</option>)}</select></label><button disabled={busy||!server} onClick={async()=>{if(!login())return;setBusy(true);try{const p=await req('/api/marketplace/live/sms/prepare','POST',{service:otherApp,country,server});const d=await req('/api/marketplace/orders/purchase','POST',{productId:p.productId,customer:{service:otherApp,country,server}});setWallet(Number(d.walletBalance||0));setMsg('Other-country number purchased successfully.');await loadOrders()}catch(e:any){setMsg(e.message)}finally{setBusy(false)}}} style={primary}>{busy?'Processing…':'Buy other number'}</button></>}
- {tab==='email'&&<><h2>✉️ Buy Custom Email</h2><p style={muted}>Temporary email inboxes from Fleexa for OTP email delivery.</p><label style={label}>Service/site<select value={emailSite} onChange={e=>setEmailSite(e.target.value)} style={select}><option value="">Choose service</option>{emails.map(e=><option key={e.id||e.site||e.name} value={e.site||e.name}>{e.name||e.site}</option>)}</select></label><label style={label}>Domain<select value={domain} onChange={e=>setDomain(e.target.value)} style={select}><option value="">Choose domain</option>{domains.map(d=><option key={d.domain||d} value={d.domain||d}>{d.domain||d}</option>)}</select></label>{emailSite&&emailPrice>0&&<div style={price}><span>FX SOCIALS PRICE</span><b>{money(emailPrice)}</b></div>}<button disabled={busy||!emailSite||!domain} onClick={()=>buy('/api/fleexa/email/buy',{site:emailSite,domain},d=>`Email ${d.order?.email||''} purchased successfully.`)} style={primary}>{busy?'Processing…':'Buy custom email'}</button></>}
- {tab==='rent'&&<><h2>📞 Rental Number</h2><p style={muted}>Choose the available rental area, app and duration.</p><label style={label}>Rental area<select value={area} onChange={e=>setArea(e.target.value)} style={select}><option value="">Choose area</option>{areas.map(a=><option key={a.area_code||a.id||a.name} value={a.area_code||a.id||a.name}>{a.name||a.area_code} · {money(a.price_ngn||a.rate||a.price)}/month</option>)}</select></label><label style={label}>Service<select value={rentApp} onChange={e=>setRentApp(e.target.value)} style={select}><option>WhatsApp</option><option>Telegram</option><option>Google</option><option>Instagram</option><option>All access</option></select></label><label style={label}>Duration<select value={months} onChange={e=>setMonths(e.target.value)} style={select}>{Array.from({length:12},(_,i)=><option key={i+1} value={i+1}>{i+1} month{i?'s':''}</option>)}</select></label>{rentPrice>0&&<div style={price}><span>FX SOCIALS PRICE</span><b>{money(rentPrice)}</b><small>Estimated retail total</small></div>}<button disabled={busy||!area} onClick={()=>buy('/api/fleexa/rent/buy',{appName:rentApp,time:months,area},d=>`Rental ${d.order?.number||''} purchased successfully.`)} style={primary}>{busy?'Processing…':'Buy rental number'}</button></>}
- {tab==='esim'&&<><h2>📶 eSIM</h2><p style={muted}>Existing eSIM products remain available through the current provider connection.</p><div style={{display:'grid',gap:10}}>{esims.length?esims.map(p=><div key={p.id} style={item}><div><b>{p.name}</b><div style={{color:'#888',fontSize:13,marginTop:5}}>{p.description||''}</div></div><button onClick={()=>buy('/api/marketplace/orders/purchase',{productId:p.id,customer:{category:'esim',country:p.country_code}},()=>`eSIM ${p.name} purchased successfully.`)} style={smallPrimary}>{money(p.price)}</button></div>):<div style={muted}>No eSIM plans are configured yet.</div>}</div></>}
- </section>
- {logged&&<section style={{marginTop:30}}><div style={ordersHeader}><div><div style={orderIcon}>↶</div></div><div style={{flex:1}}><h2 style={{margin:'0 0 4px'}}>Active Orders</h2><p style={{...muted,margin:0}}>All your active number purchases in one place. Auto-refreshing.</p></div></div><div style={{display:'grid',gap:14,marginTop:18}}>{orders.length?orders.map((o:any)=><OrderCard key={o.id||o.order_id||`${value(o,'phone','number')}-${value(o,'created_at','createdAt')}`} order={o}/>):<div style={empty}>No number purchases yet.</div>}</div></section>}
- </div></main>;
+import { useEffect, useState } from 'react';
+
+const API = (import.meta as any).env.VITE_API_BASE_URL || 'https://fx-socials-api.onrender.com';
+const token = () => localStorage.getItem('fxs-session') || '';
+const money = (n: any) => `₦${Number(n || 0).toLocaleString('en-NG')}`;
+
+async function req(path: string, method = 'GET', body?: any) {
+  const r = await fetch(`${API}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'Request failed');
+  return d;
 }
-function OrderCard({order:o}:{order:any}){const phone=String(value(o,'phone','number','data.phone')||'');const code=String(value(o,'code','otp','sms_code','verification_code','data.code')||'');const service=String(value(o,'service_name','service','app','type')||'WhatsApp');const country=String(value(o,'country_name','country','country_code')||'USA');const amount=Number(value(o,'amount','price','salePrice')||0);const done=completed(o);const created=value(o,'created_at','createdAt','created');return <article style={orderCard}><div style={orderTop}><div><h3 style={{margin:0,fontSize:24}}>{service}</h3><div style={{color:'#8b8b8b',marginTop:5}}>{country} · {age(created)}</div></div><div style={{textAlign:'right'}}><strong style={{fontSize:23}}>{money(amount)}</strong><div style={{marginTop:8,...(done?doneBadge:waitingBadge)}}>{done?'Completed':'Waiting for code'}</div></div></div><div style={detailBox}><span>{phone||'Number is being prepared…'}</span>{phone&&<button onClick={()=>void copy(phone)} style={copyBtn} aria-label="Copy phone number">▢</button>}</div><div style={{...detailBox,justifyContent:'center'}}><span style={{fontSize:25,fontWeight:900,color:code?'#16805f':'#777',letterSpacing:'.08em'}}>{code||'Waiting for SMS code…'}</span>{code&&<button onClick={()=>void copy(code)} style={copyBtn} aria-label="Copy verification code">▢</button>}</div><div style={doneBar}><span>✓</span><b>{done?'Done':'Auto-refreshing for code'}</b></div></article>}
-const back:any={border:0,background:'transparent',color:'#aaa',fontSize:15};const eyebrow:any={fontSize:11,fontWeight:800,letterSpacing:'.16em',color:'#888'};const h1:any={fontSize:'clamp(42px,8vw,68px)',lineHeight:.98,letterSpacing:'-.055em',margin:'10px 0'};const muted:any={color:'#888',lineHeight:1.5};const notice:any={marginTop:20,padding:14,borderRadius:14,background:'#fff',color:'#111',fontWeight:700};const x:any={float:'right',border:0,background:'transparent',fontSize:20};const tabGrid:any={display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8,marginTop:28};const tabBtn:any={minHeight:74,border:'1px solid #292929',background:'#0d0d0d',color:'#fff',borderRadius:16,fontWeight:900,fontSize:12};const activeTab:any={border:'2px solid #fff',background:'#fff',color:'#050505'};const card:any={marginTop:18,border:'1px solid #292929',background:'#0d0d0d',borderRadius:20,padding:18};const label:any={display:'block',marginTop:15,color:'#aaa'};const select:any={display:'block',width:'100%',height:50,marginTop:7,borderRadius:12,border:'1px solid #333',background:'#151515',color:'#fff',padding:'0 13px'};const primary:any={width:'100%',height:52,marginTop:18,border:0,borderRadius:13,background:'#fff',color:'#050505',fontWeight:900};const smallPrimary:any={border:0,borderRadius:10,background:'#fff',color:'#050505',fontWeight:900,padding:'10px 14px'};const price:any={marginTop:18,padding:16,border:'1px solid #292929',borderRadius:14,display:'flex',flexDirection:'column',gap:5};const item:any={border:'1px solid #292929',background:'#0d0d0d',borderRadius:14,padding:14,display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,marginTop:8};const ordersHeader:any={display:'flex',alignItems:'center',gap:14,padding:'8px 0'};const orderIcon:any={width:68,height:68,borderRadius:18,background:'#f4f4f4',color:'#666',display:'grid',placeItems:'center',fontSize:35};const orderCard:any={background:'#fff',color:'#171b2b',border:'1px solid #dfe2e8',borderRadius:20,padding:20,boxShadow:'0 2px 10px rgba(0,0,0,.08)'};const orderTop:any={display:'flex',justifyContent:'space-between',gap:15,alignItems:'flex-start'};const doneBadge:any={background:'#d9f6e9',color:'#17664d',borderRadius:9,padding:'8px 13px',fontWeight:800,fontSize:13};const waitingBadge:any={background:'#fff2cc',color:'#765b00',borderRadius:9,padding:'8px 13px',fontWeight:800,fontSize:13};const detailBox:any={marginTop:15,minHeight:60,border:'1px solid #eceef2',background:'#fafafa',borderRadius:11,padding:'14px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,fontSize:20,fontWeight:800};const copyBtn:any={border:0,background:'transparent',color:'#9ca3af',fontSize:24,padding:4};const doneBar:any={marginTop:15,minHeight:55,border:'1px solid #dcefe7',background:'#f5fffa',color:'#67ae95',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',gap:10,fontSize:17};const empty:any={border:'1px dashed #444',borderRadius:14,padding:20,color:'#888',textAlign:'center'};
+
+const value = (o: any, ...keys: string[]) => {
+  for (const key of keys) {
+    const v = key.split('.').reduce((a: any, p: string) => a?.[p], o);
+    if (v !== undefined && v !== null && String(v) !== '') return v;
+  }
+  return '';
+};
+
+const age = (raw: any) => {
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '';
+  const days = Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+  return days === 0 ? 'Today' : days === 1 ? '1 day ago' : `${days} days ago`;
+};
+
+const isDone = (o: any) => ['completed', 'complete', 'success', 'successful', 'done', 'finished'].includes(String(value(o, 'status', 'state')).toLowerCase());
+
+export default function UnifiedServicesPage() {
+  const [tab, setTab] = useState('us');
+  const [services, setServices] = useState<any[]>([]);
+  const [service, setService] = useState('');
+  const [price, setPrice] = useState(0);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const logged = Boolean(token());
+
+  const loadOrders = async () => {
+    if (!logged) return;
+    try {
+      const d = await req('/api/fleexa/orders');
+      setOrders(Array.isArray(d.orders) ? d.orders : []);
+    } catch {}
+  };
+
+  useEffect(() => {
+    req('/api/fleexa/sms/services')
+      .then((d) => {
+        const list = Array.isArray(d.services) ? d.services : [];
+        setServices(list);
+        if (list[0]) setService(list[0].name || list[0].id || '');
+      })
+      .catch((e) => setMessage(e.message));
+  }, []);
+
+  useEffect(() => {
+    if (!service || tab !== 'us') return;
+    req(`/api/fleexa/sms/prices?service=${encodeURIComponent(service)}`)
+      .then((d) => setPrice(Number(d.salePrice || 0)))
+      .catch((e) => setMessage(e.message));
+  }, [service, tab]);
+
+  useEffect(() => {
+    void loadOrders();
+    if (!logged) return;
+    const id = window.setInterval(() => void loadOrders(), 10000);
+    return () => window.clearInterval(id);
+  }, [logged]);
+
+  const buyNumber = async () => {
+    if (!logged) {
+      location.hash = '#/account';
+      return;
+    }
+    setBusy(true);
+    try {
+      const d = await req('/api/fleexa/sms/buy', 'POST', { service });
+      setMessage(`US number ${d.order?.phone || ''} purchased. Waiting for its verification code.`);
+      await loadOrders();
+    } catch (e: any) {
+      setMessage(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tabs = [
+    ['us', '🇺🇸 US Number'],
+    ['other', '🌍 Other Numbers'],
+    ['email', '✉️ Custom Email'],
+    ['rent', '📞 Rental'],
+    ['esim', '📶 eSIM'],
+  ];
+
+  return (
+    <main style={page}>
+      <div style={wrap}>
+        <button onClick={() => (location.hash = '#/home')} style={back}>← FX Socials</button>
+        <p style={eyebrow}>FX SOCIALS SERVICES</p>
+        <h1 style={title}>Choose what you need.</h1>
+        <p style={muted}>Numbers, email, rentals and eSIMs in one place.</p>
+        {message && <div style={notice}>{message}<button onClick={() => setMessage('')} style={close}>×</button></div>}
+        <div style={tabsStyle}>
+          {tabs.map(([id, label]) => <button key={id} onClick={() => setTab(id)} style={{ ...tabButton, ...(tab === id ? active : {}) }}>{label}</button>)}
+        </div>
+
+        <section style={card}>
+          {tab === 'us' && <>
+            <h2>🇺🇸 Buy US Number</h2>
+            <p style={muted}>Verification numbers with the FX Socials retail price.</p>
+            <label style={label}>Choose service
+              <select value={service} onChange={(e) => setService(e.target.value)} style={select}>
+                {services.map((s) => <option key={s.id || s.name} value={s.name || s.id}>{s.name || s.id}</option>)}
+              </select>
+            </label>
+            {price > 0 && <div style={priceBox}><span>FX SOCIALS PRICE</span><b>{money(price)}</b></div>}
+            <button disabled={busy || !price} onClick={buyNumber} style={primary}>{busy ? 'Processing…' : `Buy US number${price ? ` · ${money(price)}` : ''}`}</button>
+          </>}
+          {tab !== 'us' && <>
+            <h2>{tabs.find((x) => x[0] === tab)?.[1] || 'Services'}</h2>
+            <p style={muted}>This service remains available. Choose it from the service options or dashboard to continue.</p>
+            <button onClick={() => setMessage('Service options are loading from the connected provider.')} style={primary}>Continue</button>
+          </>}
+        </section>
+
+        {logged && <section style={{ marginTop: 32 }}>
+          <div style={ordersHeader}><div><h2 style={{ margin: 0 }}>Active Orders</h2><p style={{ ...muted, margin: '4px 0 0' }}>Your number purchases and verification codes. Auto-refreshing.</p></div></div>
+          <div style={{ display: 'grid', gap: 14, marginTop: 16 }}>
+            {orders.length ? orders.map((o) => <OrderCard key={o.id || o.order_id || `${value(o, 'phone', 'number')}-${value(o, 'created_at', 'createdAt')}`} order={o} />) : <div style={empty}>No number purchases yet.</div>}
+          </div>
+        </section>}
+      </div>
+    </main>
+  );
+}
+
+function OrderCard({ order: o }: { order: any }) {
+  const phone = String(value(o, 'phone', 'number', 'data.phone') || '');
+  const code = String(value(o, 'code', 'otp', 'sms_code', 'verification_code', 'data.code') || '');
+  const service = String(value(o, 'service_name', 'service', 'app', 'type') || 'WhatsApp');
+  const country = String(value(o, 'country_name', 'country', 'country_code') || 'USA');
+  const amount = Number(value(o, 'amount', 'price', 'salePrice') || 0);
+  const done = isDone(o);
+  const copy = async (text: string) => { if (text) await navigator.clipboard?.writeText(text).catch(() => {}); };
+
+  return <article style={orderCard}>
+    <div style={orderTop}>
+      <div><h3 style={{ margin: 0, fontSize: 22 }}>{service}</h3><div style={muted}>{country} · {age(value(o, 'created_at', 'createdAt', 'created'))}</div></div>
+      <div style={{ textAlign: 'right' }}><strong style={{ fontSize: 21 }}>{money(amount)}</strong><div style={done ? doneBadge : waitingBadge}>{done ? 'Completed' : 'Waiting for code'}</div></div>
+    </div>
+    <div style={detail}><span>{phone || 'Number is being prepared…'}</span>{phone && <button onClick={() => void copy(phone)} style={copyButton}>Copy</button>}</div>
+    <div style={detail}><span style={{ fontWeight: 900, letterSpacing: '.08em' }}>{code || 'Waiting for SMS code…'}</span>{code && <button onClick={() => void copy(code)} style={copyButton}>Copy</button>}</div>
+    <div style={doneBar}>✓ {done ? 'Done' : 'Auto-refreshing for code'}</div>
+  </article>;
+}
+
+const page: any = { minHeight: '100vh', background: '#050505', color: '#fff', padding: '24px 18px 70px' };
+const wrap: any = { maxWidth: 980, margin: '0 auto' };
+const back: any = { border: 0, background: 'transparent', color: '#aaa', fontSize: 15 };
+const eyebrow: any = { fontSize: 11, fontWeight: 800, letterSpacing: '.16em', color: '#888', marginTop: 28 };
+const title: any = { fontSize: 'clamp(42px, 8vw, 68px)', lineHeight: .98, letterSpacing: '-.055em', margin: '10px 0' };
+const muted: any = { color: '#888', lineHeight: 1.5 };
+const notice: any = { marginTop: 20, padding: 14, borderRadius: 14, background: '#fff', color: '#111', fontWeight: 700 };
+const close: any = { float: 'right', border: 0, background: 'transparent', fontSize: 20 };
+const tabsStyle: any = { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginTop: 28 };
+const tabButton: any = { minHeight: 70, border: '1px solid #292929', background: '#0d0d0d', color: '#fff', borderRadius: 16, fontWeight: 900, fontSize: 12 };
+const active: any = { border: '2px solid #fff', background: '#fff', color: '#050505' };
+const card: any = { marginTop: 18, padding: 20, border: '1px solid #222', borderRadius: 20, background: '#0b0b0b' };
+const label: any = { display: 'grid', gap: 8, marginTop: 18, fontWeight: 800 };
+const select: any = { width: '100%', padding: 14, borderRadius: 12, border: '1px solid #333', background: '#111', color: '#fff' };
+const priceBox: any = { marginTop: 18, padding: 16, borderRadius: 14, background: '#151515', display: 'grid', gap: 5 };
+const primary: any = { width: '100%', marginTop: 18, padding: 16, border: 0, borderRadius: 14, background: '#fff', color: '#000', fontWeight: 900 };
+const ordersHeader: any = { display: 'flex', alignItems: 'center', gap: 12 };
+const orderCard: any = { padding: 18, border: '1px solid #242424', borderRadius: 18, background: '#0b0b0b' };
+const orderTop: any = { display: 'flex', justifyContent: 'space-between', gap: 12 };
+const detail: any = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, padding: 14, borderRadius: 12, background: '#151515' };
+const copyButton: any = { border: '1px solid #333', background: '#0b0b0b', color: '#fff', borderRadius: 9, padding: '7px 10px' };
+const doneBadge: any = { marginTop: 7, padding: '5px 8px', borderRadius: 8, background: '#143d2b', color: '#6fe0a5', fontSize: 12, fontWeight: 800 };
+const waitingBadge: any = { marginTop: 7, padding: '5px 8px', borderRadius: 8, background: '#3d3214', color: '#f0c968', fontSize: 12, fontWeight: 800 };
+const doneBar: any = { marginTop: 12, color: '#888', fontWeight: 800 };
+const empty: any = { padding: 18, border: '1px dashed #333', borderRadius: 14, color: '#777' };
