@@ -17,6 +17,12 @@ export const marketplaceConfig = {
     baseUrl: (process.env.SMM_API_URL || 'https://app.smmpanel.ng/api/v2').replace(/\/$/, ''),
     apiKey: process.env.SMM_API_KEY,
     markupPercent: Number(process.env.SMM_MARKUP_PERCENT || 40)
+  },
+  smmBackup: {
+    provider: process.env.SMM_PROVIDER_2 || 'smm-africa',
+    baseUrl: (process.env.SMM_PROVIDER_2_API_URL || 'https://smm.africa/api/v3').replace(/\/$/, ''),
+    apiKey: process.env.SMM_PROVIDER_2_API_KEY,
+    markupPercent: Number(process.env.SMM_MARKUP_PERCENT || 40)
   }
 };
 
