@@ -12,18 +12,22 @@ const platforms = [
 ];
 
 async function req(path:string, method='GET', body?:any) {
-  const r = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers:{'Content-Type':'application/json'},
-    body: body === undefined ? undefined : JSON.stringify(body)
-  });
+  const r = await fetch(`${API_BASE}${path}`, { method, headers:{'Content-Type':'application/json'}, body: body === undefined ? undefined : JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || 'Request failed');
   return d;
 }
 
-const providerOf = (s:any) => String(s.provider || s.id || '').startsWith('smm-africa:') ? 'smm-africa' : 'smm-panel-ng';
+const providerOf = (s:any) => {
+  const raw = String(s.provider || s.id || s.service || '').toLowerCase();
+  return raw.startsWith('smm-africa:') || raw === 'smm-africa' ? 'smm-africa' : 'smm-panel-ng';
+};
 const providerLabel = (id:string) => id === 'smm-africa' ? 'Provider 2' : 'Provider 1';
+const platformMatches = (service:any, platform:string) => {
+  const text = `${service.name || ''} ${service.category || ''} ${service.type || ''} ${service.description || ''}`.toLowerCase();
+  if (platform === 'X') return /twitter|tweet|x\b/.test(text);
+  return text.includes(platform.toLowerCase());
+};
 
 export default function BoostingPage(){
   const [services,setServices] = useState<any[]>([]);
@@ -41,19 +45,11 @@ export default function BoostingPage(){
   const orderFormRef = useRef<HTMLElement|null>(null);
   const linkInputRef = useRef<HTMLInputElement|null>(null);
 
-  const load = async() => {
-    try { setLoading(true); const d=await req('/api/smm/services'); setServices(Array.isArray(d.services)?d.services:[]); }
-    catch(e:any){ setMessage(e.message || 'Boosting services are temporarily unavailable.'); }
-    finally { setLoading(false); }
-  };
-  const loadWallet = async() => { if(!token()) return; try { const d=await req('/api/me/wallet','POST',{sessionToken:token()}); setWallet(Number(d.wallet?.balance||0)); } catch{} };
-  const loadOrders = async() => { if(!token()) return; try { const d=await req('/api/smm/orders'); setOrders(d.orders||[]); } catch{} };
-  useEffect(()=>{ void load(); void loadWallet(); void loadOrders(); },[]);
-  useEffect(()=>{
-    if(!selected) return;
-    const t=window.setTimeout(()=>{ orderFormRef.current?.scrollIntoView({behavior:'smooth',block:'start'}); window.setTimeout(()=>linkInputRef.current?.focus(),450); },80);
-    return()=>window.clearTimeout(t);
-  },[selected]);
+  const load = async()=>{ try{setLoading(true);const d=await req('/api/smm/services');setServices(Array.isArray(d.services)?d.services:[]);}catch(e:any){setMessage(e.message||'Boosting services are temporarily unavailable.');}finally{setLoading(false);} };
+  const loadWallet = async()=>{if(!token())return;try{const d=await req('/api/me/wallet','POST',{sessionToken:token()});setWallet(Number(d.wallet?.balance||0));}catch{}};
+  const loadOrders = async()=>{if(!token())return;try{const d=await req('/api/smm/orders');setOrders(d.orders||[]);}catch{}};
+  useEffect(()=>{void load();void loadWallet();void loadOrders();},[]);
+  useEffect(()=>{if(!selected)return;const t=window.setTimeout(()=>{orderFormRef.current?.scrollIntoView({behavior:'smooth',block:'start'});window.setTimeout(()=>linkInputRef.current?.focus(),450);},80);return()=>window.clearTimeout(t);},[selected]);
 
   const providers = useMemo(()=>[
     {id:'smm-panel-ng',label:'Provider 1',services:services.filter(s=>providerOf(s)==='smm-panel-ng')},
@@ -63,39 +59,24 @@ export default function BoostingPage(){
   const filtered = useMemo(()=>{
     const q=search.trim().toLowerCase();
     return (currentProvider?.services||[]).filter(s=>{
-      const text=`${s.name||''} ${s.category||''}`.toLowerCase();
-      const matches=platform==='X' ? /twitter|tweet|x\b/.test(text) : text.includes(platform.toLowerCase());
-      return matches && (!q || text.includes(q));
+      const text=`${s.name||''} ${s.category||''} ${s.type||''} ${s.description||''}`.toLowerCase();
+      return platformMatches(s,platform) && (!q || text.includes(q));
     }).sort((a,b)=>Number(a.pricePer1000||0)-Number(b.pricePer1000||0));
   },[currentProvider,platform,search]);
-
   const chooseProvider=(id:string)=>{setProvider(id);setSelected(null);setSearch('');setMessage('');};
   const choosePlatform=(p:string)=>{setPlatform(p);setSelected(null);setSearch('');};
   const chooseService=(s:any)=>{setSelected({...s,provider:providerOf(s),providerLabel:providerLabel(providerOf(s))});setQuantity(String(s.min||''));};
-  const validQty=!!selected && Number(quantity)>=Number(selected.min) && Number(quantity)<=Number(selected.max);
-  const total=selected&&quantity ? Number(selected.pricePer1000||0)*Number(quantity)/1000 : 0;
+  const validQty=!!selected&&Number(quantity)>=Number(selected.min)&&Number(quantity)<=Number(selected.max);
+  const total=selected&&quantity?Number(selected.pricePer1000||0)*Number(quantity)/1000:0;
 
-  const placeOrder=async()=>{
-    if(!token()){location.hash='#/account';return;}
-    if(!selected || !link.trim() || !validQty){setMessage('Pick a service, enter your public link, and choose a valid quantity.');return;}
-    setBusy(true); setMessage('');
-    try{
-      const d=await req('/api/smm/orders','POST',{serviceId:selected.id,link:link.trim(),quantity:Number(quantity),sessionToken:token()});
-      setWallet(Number(d.walletBalance||0));
-      setMessage(`Your boost order ${d.orderNumber||''} has been placed.`);
-      setSelected(null);setLink('');setQuantity('');await loadOrders();
-    }catch(e:any){setMessage(e.message||'Could not place the boost order.');}
-    finally{setBusy(false);}
-  };
+  const placeOrder=async()=>{if(!token()){location.hash='#/account';return;}if(!selected||!link.trim()||!validQty){setMessage('Pick a service, enter your public link, and choose a valid quantity.');return;}setBusy(true);setMessage('');try{const d=await req('/api/smm/orders','POST',{serviceId:selected.id,link:link.trim(),quantity:Number(quantity),sessionToken:token()});setWallet(Number(d.walletBalance||0));setMessage(`Your boost order ${d.orderNumber||''} has been placed.`);setSelected(null);setLink('');setQuantity('');await loadOrders();}catch(e:any){setMessage(e.message||'Could not place the boost order.');}finally{setBusy(false);}};
 
   return <main style={{minHeight:'100vh',background:'#050505',color:'#fff',paddingBottom:70}}><div style={{maxWidth:940,margin:'0 auto',padding:'28px 18px'}}>
     <button onClick={()=>location.hash='#/home'} style={{border:0,background:'transparent',color:'#aaa',fontSize:15,padding:0,cursor:'pointer'}}>← FX Socials</button>
     <div style={{marginTop:30}}><div style={{fontSize:11,fontWeight:900,letterSpacing:'.18em',color:'#888'}}>BOOSTING</div><h1 style={{fontSize:'clamp(42px,8vw,68px)',lineHeight:.96,letterSpacing:'-.06em',margin:'12px 0'}}>What do you want<br/>to boost?</h1><p style={{color:'#999',fontSize:17,lineHeight:1.5,maxWidth:680}}>Choose Provider 1 or Provider 2, select a social platform, choose a live service and place your order.</p></div>
     <button onClick={()=>location.hash='#/wallet'} style={{marginTop:20,border:'1px solid #333',background:'#101010',color:'#fff',borderRadius:999,padding:'13px 18px',fontWeight:900}}>Wallet {money(wallet)}</button>
     {message&&<div style={{marginTop:22,padding:16,borderRadius:15,background:'#fff',color:'#111',fontWeight:700,lineHeight:1.4}}>{message}<button onClick={()=>setMessage('')} style={{float:'right',border:0,background:'transparent',fontSize:22,cursor:'pointer'}}>×</button></div>}
-
     <section style={{marginTop:28}}><div style={{fontSize:11,color:'#888',fontWeight:900,letterSpacing:'.14em',marginBottom:10}}>BOOSTING PROVIDER</div><div style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10}}>{providers.map(p=><button key={p.id} onClick={()=>chooseProvider(p.id)} style={{textAlign:'left',border:provider===p.id?'2px solid #fff':'1px solid #292929',background:provider===p.id?'#fff':'#0d0d0d',color:provider===p.id?'#050505':'#fff',borderRadius:18,padding:'16px 17px',cursor:'pointer'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}><div><div style={{fontSize:15,fontWeight:900}}>{p.label}</div><div style={{fontSize:12,marginTop:5,color:provider===p.id?'#555':'#777'}}>{p.services.length} live services · 40% FX Socials markup</div></div><span style={{fontSize:12,fontWeight:900}}>{provider===p.id?'✓ Selected':'Use'}</span></div></button>)}</div><div style={{fontSize:12,color:'#777',marginTop:9}}>Provider 1 is primary. Provider 2 is the backup route. Orders remain tied to the provider that actually receives them.</div></section>
-
     <section style={{marginTop:25}}><div style={{display:'grid',gridTemplateColumns:'repeat(5,minmax(0,1fr))',gap:10}}>{platforms.map(p=><button key={p.id} onClick={()=>choosePlatform(p.id)} aria-label={`Boost ${p.label}`} style={{minHeight:108,border:platform===p.id?'2px solid #fff':'1px solid #292929',background:platform===p.id?'#fff':'#0d0d0d',color:platform===p.id?'#050505':'#fff',borderRadius:20,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:10}}><img src={p.icon} alt={`${p.label} logo`} style={{width:34,height:34,objectFit:'contain',filter:platform===p.id?'invert(1)':'none'}}/><span style={{fontSize:13,fontWeight:900}}>{p.label}</span></button>)}</div></section>
     <div style={{position:'relative',marginTop:18}}><span style={{position:'absolute',left:16,top:12,color:'#777',fontSize:20}}>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder={`Search ${platform} services on ${currentProvider?.label||'provider'}`} style={{width:'100%',height:54,borderRadius:16,border:'1px solid #303030',background:'#101010',color:'#fff',padding:'0 16px 0 46px',fontSize:15,outline:'none'}}/></div>
     <section style={{marginTop:18}}>{loading?<div style={{padding:32,textAlign:'center',color:'#888',border:'1px solid #292929',borderRadius:18}}>Loading provider services…</div>:filtered.length?<div style={{display:'grid',gap:11}}>{filtered.map(s=>{const active=selected?.id===s.id;return <button key={s.id} onClick={()=>chooseService(s)} style={{textAlign:'left',border:active?'2px solid #fff':'1px solid #292929',background:active?'#171717':'#0d0d0d',color:'#fff',borderRadius:17,padding:17,cursor:'pointer'}}><div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center'}}><div><div style={{fontSize:16,fontWeight:900}}>{s.name}</div><div style={{fontSize:12,color:'#777',marginTop:6}}>{s.category||platform} · {money(s.pricePer1000)} per 1,000 · min {Number(s.min).toLocaleString()} · max {Number(s.max).toLocaleString()}</div></div><span style={{fontSize:12,fontWeight:900}}>{active?'✓ Selected':'Choose'}</span></div></button>})}</div>:<div style={{padding:30,textAlign:'center',border:'1px solid #292929',borderRadius:18,color:'#888'}}>No {platform} services are available from {currentProvider?.label||'this provider'} right now.</div>}</section>
