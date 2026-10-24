@@ -4,44 +4,71 @@ const timeoutMs = Number(process.env.SMM_PROVIDER_TIMEOUT_MS || 30000);
 
 function providerUrls() {
   const configured = String(marketplaceConfig.smm.baseUrl || '').replace(/\/$/, '');
-  const candidates = [configured, 'https://app.smmpanel.ng/api/v2', 'https://www.smmpanel.ng/api/v2', 'https://smmpanel.ng/api/v2'];
-  return [...new Set(candidates.filter(Boolean))];
+  return [...new Set([configured, 'https://app.smmpanel.ng/api/v2'].filter(Boolean))];
+}
+
+function payload(action, params = {}) {
+  return new URLSearchParams({
+    action,
+    ...Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''))
+  });
+}
+
+async function request(baseUrl, body, apiKey, useBearer) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+      'User-Agent': 'FX-Socials/1.0'
+    };
+    if (useBearer) headers.Authorization = `Bearer ${apiKey}`;
+    else body.set('key', apiKey);
+
+    const response = await fetch(baseUrl, { method: 'POST', signal: controller.signal, headers, body });
+    const text = await response.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch {}
+    return { response, data, text };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function call(action, params = {}) {
-  const { apiKey } = marketplaceConfig.smm;
-  if (!apiKey) throw Object.assign(new Error('SMM provider is not configured on the server.'), { status: 503 });
-  const body = new URLSearchParams({ key: apiKey, action, ...Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')) });
+  const apiKey = marketplaceConfig.smm.apiKey;
+  if (!apiKey) throw Object.assign(new Error('SMM provider is not configured on the server. Add SMM_API_KEY in Render.'), { status: 503 });
+
   let lastInvalid = null;
   for (const baseUrl of providerUrls()) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(baseUrl, { method:'POST', signal:controller.signal, headers:{'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'}, body });
-      const text = await response.text();
-      let data = null;
-      try { data = JSON.parse(text); } catch {}
-      if (!response.ok) {
-        if (data?.error) throw Object.assign(new Error(String(data.error)), { status: response.status });
-        lastInvalid = new Error(`SMM provider HTTP ${response.status} at ${baseUrl}`);
-        continue;
+    // SMM Panel Nigeria documents both Bearer authentication and the traditional key POST field.
+    // Try Bearer first because it avoids proxies rewriting the key field, then fall back to form auth.
+    for (const useBearer of [true, false]) {
+      try {
+        const { response, data } = await request(baseUrl, payload(action, params), apiKey, useBearer);
+        if (response.ok && data && typeof data === 'object') {
+          if (data.error) {
+            throw Object.assign(new Error(String(data.error)), { status: response.status || 502 });
+          }
+          return data;
+        }
+        if (!response.ok && data?.error) {
+          throw Object.assign(new Error(String(data.error)), { status: response.status || 502 });
+        }
+        lastInvalid = new Error(`SMM provider returned ${response.status} HTML/non-JSON at ${baseUrl}.`);
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          lastInvalid = Object.assign(new Error('SMM provider is taking longer than expected. Please retry availability.'), { status: 504 });
+          continue;
+        }
+        if (error?.status && error.status !== 502 && error.status !== 503 && error.status !== 504) throw error;
+        lastInvalid = error;
       }
-      if (!data || typeof data !== 'object') {
-        lastInvalid = new Error(`SMM provider returned HTML/non-JSON at ${baseUrl}`);
-        continue;
-      }
-      if (data.error) throw Object.assign(new Error(String(data.error)), { status: 502 });
-      return data;
-    } catch (e) {
-      if (e?.name === 'AbortError') {
-        lastInvalid = Object.assign(new Error('SMM provider is taking longer than expected. Please retry availability.'), { status: 504 });
-        continue;
-      }
-      if (e?.status) throw e;
-      lastInvalid = e;
-    } finally { clearTimeout(timer); }
+    }
   }
-  throw Object.assign(lastInvalid || new Error('SMM provider is unavailable.'), { status:lastInvalid?.status || 502 });
+
+  throw Object.assign(lastInvalid || new Error('SMM provider is unavailable.'), { status: lastInvalid?.status || 502 });
 }
 
 export const smm = {
