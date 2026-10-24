@@ -1,5 +1,6 @@
 export default function QuickNav(){
  const go=(path:string)=>{location.hash=`#/${path}`};
+ const openApi=()=>{window.open('https://fx-socials-api.onrender.com/developers','_blank','noopener,noreferrer')};
  let isAdmin=false;
  try{
   const saved=JSON.parse(localStorage.getItem('fxs-user')||'null');
@@ -18,5 +19,6 @@ export default function QuickNav(){
  ];
  return <nav className="quick-nav" aria-label="FX Socials main menu">
   {items.map(([path,label])=><button key={path} onClick={()=>go(path)}>{label}</button>)}
+  <button onClick={openApi}>Developer API</button>
  </nav>;
 }
