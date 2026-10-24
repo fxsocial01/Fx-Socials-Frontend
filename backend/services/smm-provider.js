@@ -33,10 +33,19 @@ async function request(config, action, params={}, {idempotencyKey}={}) {
 
 const safeFailover = e => { if(e?.ambiguous)return false; const s=Number(e?.status||0),c=String(e?.code||'').toUpperCase(); if([400,401,403,423].includes(s)||c==='INVALID_API_KEY')return false; return s===429||s>=500||s===0||Boolean(e?.retryable); };
 const callProvider=(provider,action,params={},options={})=>request(configs[provider],action,params,options);
+const listFromResponse=d => Array.isArray(d)?d:Array.isArray(d?.services)?d.services:Array.isArray(d?.data)?d.data:Array.isArray(d?.data?.services)?d.data.services:Array.isArray(d?.result)?d.result:[];
+const firstValue=(obj,keys,fallback='')=>{for(const k of keys){if(obj?.[k]!==undefined&&obj?.[k]!==null&&String(obj[k]).trim()!=='')return obj[k];}return fallback;};
 
 async function servicesFor(provider){
-  const d=await callProvider(provider,'services'); const list=Array.isArray(d)?d:(Array.isArray(d.services)?d.services:[]);
-  return list.map(s=>{const id=String(s.service??s.id??'').trim(),rate=Number(s.rate??s.price??0);return {id:encodedService(provider,id),provider,providerName:configs[provider].label,providerServiceId:id,name:String(s.name||`Service ${id}`),category:String(s.category||'').trim(),type:String(s.type||'').trim(),description:String(s.description||'').trim(),providerRate:rate,pricePer1000:retailFromRate(rate),min:Number(s.min||0),max:Number(s.max||0),refill:Boolean(s.refill),cancel:Boolean(s.cancel)}}).filter(s=>s.providerServiceId&&s.providerRate>0&&s.min>0&&s.max>=s.min);
+  const d=await callProvider(provider,'services');
+  const list=listFromResponse(d);
+  return list.map(s=>{
+    const id=String(firstValue(s,['service','id','service_id','serviceId'],'')).trim();
+    const rate=Number(firstValue(s,['rate','price','cost','price_per_1000','pricePer1000'],0));
+    const min=Number(firstValue(s,['min','minimum','min_quantity','minQuantity'],1));
+    const max=Number(firstValue(s,['max','maximum','max_quantity','maxQuantity'],Number.MAX_SAFE_INTEGER));
+    return {id:encodedService(provider,id),provider,providerName:configs[provider].label,providerServiceId:id,name:String(firstValue(s,['name','title'],`Service ${id}`)),category:String(firstValue(s,['category','category_name'],'')).trim(),type:String(firstValue(s,['type','service_type'],'')).trim(),description:String(firstValue(s,['description','details'],'')).trim(),providerRate:rate,pricePer1000:retailFromRate(rate),min,max,refill:Boolean(s.refill??s.refillable??false),cancel:Boolean(s.cancel??s.cancellable??false)};
+  }).filter(s=>s.providerServiceId&&s.providerRate>0&&s.min>0&&s.max>=s.min);
 }
 
 async function allServices(){
