@@ -26,17 +26,14 @@ async function request(config, action, params={}, {idempotencyKey}={}) {
       if(idempotencyKey)headers['Idempotency-Key']=idempotencyKey;
       response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers,body:JSON.stringify(payload)});
     } else {
-      // Provider 1 documents form-encoded POST as the canonical API format.
-      // Keep the API key server-side and send exactly the documented key/action fields.
       const headers={Accept:'application/json','User-Agent':'FX-Socials/1.0','Content-Type':'application/x-www-form-urlencoded'};
       const body=new URLSearchParams({key:config.apiKey,...payload});
       response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers,body});
       if(!response.ok && [400,401,403,415].includes(response.status)){
         const text=await response.text();
         let data=null;try{data=JSON.parse(text)}catch{}
-        // Retry once with the provider's accepted JSON/Bearer form when the form endpoint rejects the request.
         const jsonHeaders={Accept:'application/json','User-Agent':'FX-Socials/1.0','Content-Type':'application/json',Authorization:`Bearer ${config.apiKey}`};
-        response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers:jsonHeaders,body:JSON.stringify(payload)});
+        response=await fetch(config.baseUrl,{method:'POST',signal:controller.signal,headers:jsonHeaders,body:JSON.stringify({key:config.apiKey,...payload})});
       }
     }
     const text=await response.text(); let data=null; try{data=JSON.parse(text)}catch{}
