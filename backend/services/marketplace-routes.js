@@ -6,21 +6,35 @@ const moneyKobo = n => Math.round(Number(n) * 100);
 const timingSafe = (a,b) => { const x=Buffer.from(String(a||'')), y=Buffer.from(String(b||'')); return x.length===y.length && crypto.timingSafeEqual(x,y); };
 const smsPriceCache = new Map();
 const SMS_PRICE_CACHE_MS = 30000;
+const SMS_PROVIDER_TIMEOUT_MS = Math.max(5000, Number(process.env.SMS_PROVIDER_TIMEOUT_MS || 20000));
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function socio(path, options={}) {
-  if (!marketplaceConfig.sms.apiKey) throw new Error('SMS provider is not configured');
+  if (!marketplaceConfig.sms.apiKey) throw Object.assign(new Error('SMS provider is not configured'),{status:503,code:'SMS_NOT_CONFIGURED'});
   const base=(marketplaceConfig.sms.baseUrl||'https://sociosms.com/api/public/v1').replace(/\/$/,'');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Number(process.env.SMS_PROVIDER_TIMEOUT_MS || 20000));
-  try {
-    const r=await fetch(base+path,{...options,signal:controller.signal,headers:{Authorization:`Bearer ${marketplaceConfig.sms.apiKey}`,Accept:'application/json','Content-Type':'application/json',...(options.headers||{})}});
-    const d=await r.json().catch(() => ({}));
-    if(!r.ok) throw Object.assign(new Error(d?.error?.message||d?.message||`SMS provider request failed (${r.status})`),{status:r.status});
-    return d;
-  } catch (e) {
-    if (e?.name === 'AbortError') throw Object.assign(new Error('SMS provider is taking longer than expected. Please retry availability.'), { status: 504 });
-    throw e;
-  } finally { clearTimeout(timer); }
+  const method=String(options.method||'GET').toUpperCase();
+  const maxAttempts=method==='GET'?3:1;
+  let last;
+  for(let attempt=1;attempt<=maxAttempts;attempt++){
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SMS_PROVIDER_TIMEOUT_MS);
+    try {
+      const r=await fetch(base+path,{...options,signal:controller.signal,headers:{Authorization:`Bearer ${marketplaceConfig.sms.apiKey}`,Accept:'application/json','Content-Type':'application/json',...(options.headers||{})}});
+      const d=await r.json().catch(() => ({}));
+      if(!r.ok) {
+        const err=Object.assign(new Error(d?.error?.message||d?.message||`SMS provider request failed (${r.status})`),{status:r.status,code:d?.error?.code||d?.code||'SMS_PROVIDER_ERROR'});
+        last=err;
+        if(attempt<maxAttempts && (r.status===408||r.status===429||r.status>=500)){await sleep(350*attempt);continue;}
+        throw err;
+      }
+      return d;
+    } catch (e) {
+      last=e?.name==='AbortError'?Object.assign(new Error('SMS provider timed out. Please retry availability.'),{status:504,code:'SMS_PROVIDER_TIMEOUT'}):e;
+      if(attempt<maxAttempts && (!last?.status||last.status===408||last.status===429||last.status>=500)){await sleep(350*attempt);continue;}
+      throw last;
+    } finally { clearTimeout(timer); }
+  }
+  throw last||Object.assign(new Error('SMS provider request failed'),{status:502,code:'SMS_PROVIDER_ERROR'});
 }
 
 async function getSmsPrices(service,country) {
@@ -28,6 +42,7 @@ async function getSmsPrices(service,country) {
   const cached=smsPriceCache.get(key);
   if(cached && Date.now()-cached.at<SMS_PRICE_CACHE_MS) return cached.data;
   const data=await socio(`/prices?service=${encodeURIComponent(service)}&country=${encodeURIComponent(country)}`);
+  if(!Array.isArray(data?.servers)) throw Object.assign(new Error('SMS provider returned no pricing catalogue for this selection'),{status:502,code:'SMS_PRICE_EMPTY'});
   smsPriceCache.set(key,{at:Date.now(),data});
   return data;
 }
@@ -45,10 +60,11 @@ export function registerMarketplaceRoutes({app,pool,auth,admin}) {
     if(order.category==='smm'){if(order.provider_order_id)return{status:order.status,providerOrderId:order.provider_order_id};const m=p.metadata||{};await q("UPDATE marketplace_orders SET status='fulfilling',updated_at=now() WHERE id=$1",[order.id]);try{const d=await smm.add({service:p.service_code,link:order.customer_payload?.link,quantity:order.customer_payload?.quantity});const providerOrderId=d?.order;if(!providerOrderId)throw new Error('Boosting provider did not return an order ID');await q("UPDATE marketplace_orders SET provider_order_id=$1,status='pending',provider_payload=$2,updated_at=now() WHERE id=$3",[String(providerOrderId),d,order.id]);return{status:'pending',providerOrderId:String(providerOrderId)};}catch(e){await refundIfNeeded(order.id);throw e;}}
     return{status:order.status};};
 
-  app.get('/api/marketplace/live/sms/services',async(_req,res)=>{try{const d=await socio('/services');res.json({services:d.services||[]});}catch(e){res.status(e.status||502).json({error:e.message||'Could not load SMS services'});}});
-  app.get('/api/marketplace/live/sms/countries',async(req,res)=>{try{const s=String(req.query.service||'').trim();if(!s)return res.status(400).json({error:'Choose a social service first'});const d=await socio(`/countries?service=${encodeURIComponent(s)}`);res.json({countries:d.countries||[]});}catch(e){res.status(e.status||502).json({error:e.message||'Could not load countries'});}});
-  app.get('/api/marketplace/live/sms/prices',async(req,res)=>{try{const s=String(req.query.service||'').trim(),c=String(req.query.country||'').trim().toUpperCase();if(!s||!c)return res.status(400).json({error:'Choose a service and country first'});const d=await getSmsPrices(s,c),markup=Number(process.env.SMS_RENTAL_MARKUP_NGN||500);res.json({servers:(d.servers||[]).map(x=>({...x,providerPrice:Number(x.price_ngn||0),salePrice:Math.round((Number(x.price_ngn||0)+markup)*100)/100})),markup});}catch(e){res.status(e.status||502).json({error:e.message||'Could not load SMS prices'});}});
-  app.post('/api/marketplace/live/sms/prepare',auth,async(req,res)=>{try{await schema();await repairSchema();const s=String(req.body.service||'').trim(),c=String(req.body.country||'').trim().toUpperCase(),server=String(req.body.server||'').trim().toUpperCase();if(!s||!c||!server)return res.status(400).json({error:'Choose service, country and number option'});const d=await getSmsPrices(s,c),x=(d.servers||[]).find(v=>String(v.server||'').toUpperCase()===server&&Number(v.stock||0)>0);if(!x)return res.status(409).json({error:'That number option is out of stock. Choose another option.'});const markup=Number(process.env.SMS_RENTAL_MARKUP_NGN||500),cost=Number(x.price_ngn||0),sale=cost+markup,pid=`sociosms:${s}:${c}:${server}`,meta={server,strategy:'best',autoCancelAfter:Number(process.env.SMS_AUTO_CANCEL_AFTER||120)};let r=await q('SELECT id FROM marketplace_products WHERE provider_product_id=$1 LIMIT 1',[pid]);let id=r.rows[0]?.id;if(!id){r=await q(`INSERT INTO marketplace_products(category,provider,provider_product_id,country_code,service_code,name,description,provider_cost_kobo,sale_price_kobo,currency,status,metadata) VALUES('sms',$1,$2,$3,$4,$5,$6,$7,$8,'NGN','active',$9::jsonb) RETURNING id`,[marketplaceConfig.sms.provider||'sociosms',pid,c,s,`${x.country_name||c} · ${s}`,`Live ${s} SMS rental for ${x.country_name||c}.`,moneyKobo(cost),moneyKobo(sale),JSON.stringify(meta)]);id=r.rows[0]?.id;}if(!id)throw Error('Could not prepare the SMS rental');res.json({productId:id,price:sale,country:c,countryName:x.country_name||c,server,stock:Number(x.stock||0)});}catch(e){res.status(e.status||502).json({error:e.message||'Could not prepare SMS rental'});}});
+  app.get('/api/marketplace/live/sms/health',async(_req,res)=>{const result={configured:Boolean(marketplaceConfig.sms.apiKey&&marketplaceConfig.sms.baseUrl),provider:marketplaceConfig.sms.provider||'unset',baseUrl:marketplaceConfig.sms.baseUrl||null,services:false,countries:false,prices:false,checkedAt:new Date().toISOString()};if(!result.configured)return res.status(503).json({...result,ok:false,error:'SMS provider credentials/base URL are not configured'});try{const d=await socio('/services');result.services=Array.isArray(d?.services);if(result.services&&d.services.length===0)result.services=true;}catch(e){return res.status(e.status||502).json({...result,ok:false,error:e.code||e.message})}try{const sample=Array.isArray((await socio('/services'))?.services)?(await socio('/services')).services.find(x=>x?.id||x?.service):null;if(sample){const sid=String(sample.id||sample.service);const c=await socio(`/countries?service=${encodeURIComponent(sid)}`);result.countries=Array.isArray(c?.countries);if(result.countries&&c.countries[0]?.code){const p=await socio(`/prices?service=${encodeURIComponent(sid)}&country=${encodeURIComponent(String(c.countries[0].code))}`);result.prices=Array.isArray(p?.servers);}}}catch(e){return res.status(e.status||502).json({...result,ok:false,error:e.code||e.message})}const ok=result.services&&result.countries&&result.prices;res.status(ok?200:502).json({...result,ok});});
+  app.get('/api/marketplace/live/sms/services',async(_req,res)=>{try{const d=await socio('/services');res.json({services:d.services||[]});}catch(e){res.status(e.status||502).json({error:e.message||'Could not load SMS services',code:e.code||'SMS_PROVIDER_ERROR'});}});
+  app.get('/api/marketplace/live/sms/countries',async(req,res)=>{try{const s=String(req.query.service||'').trim();if(!s)return res.status(400).json({error:'Choose a social service first'});const d=await socio(`/countries?service=${encodeURIComponent(s)}`);res.json({countries:d.countries||[]});}catch(e){res.status(e.status||502).json({error:e.message||'Could not load countries',code:e.code||'SMS_PROVIDER_ERROR'});}});
+  app.get('/api/marketplace/live/sms/prices',async(req,res)=>{try{const s=String(req.query.service||'').trim(),c=String(req.query.country||'').trim().toUpperCase();if(!s||!c)return res.status(400).json({error:'Choose a service and country first'});const d=await getSmsPrices(s,c),markup=Number(process.env.SMS_RENTAL_MARKUP_NGN||500);const servers=(d.servers||[]).filter(x=>Number(x.stock||0)>0).map(x=>({...x,providerPrice:Number(x.price_ngn||0),salePrice:Math.round((Number(x.price_ngn||0)+markup)*100)/100}));if(!servers.length)return res.status(409).json({error:'No SMS numbers are currently in stock for this service and country.'});res.json({servers,markup});}catch(e){res.status(e.status||502).json({error:e.message||'Could not load SMS prices',code:e.code||'SMS_PROVIDER_ERROR'});}});
+  app.post('/api/marketplace/live/sms/prepare',auth,async(req,res)=>{try{await schema();await repairSchema();const s=String(req.body.service||'').trim(),c=String(req.body.country||'').trim().toUpperCase(),server=String(req.body.server||'').trim().toUpperCase();if(!s||!c||!server)return res.status(400).json({error:'Choose service, country and number option'});const d=await getSmsPrices(s,c),x=(d.servers||[]).find(v=>String(v.server||'').toUpperCase()===server&&Number(v.stock||0)>0);if(!x)return res.status(409).json({error:'That number option is out of stock. Choose another option.'});const markup=Number(process.env.SMS_RENTAL_MARKUP_NGN||500),cost=Number(x.price_ngn||0),sale=cost+markup,pid=`sociosms:${s}:${c}:${server}`,meta={server,strategy:'best',autoCancelAfter:Number(process.env.SMS_AUTO_CANCEL_AFTER||120)};let r=await q('SELECT id FROM marketplace_products WHERE provider_product_id=$1 LIMIT 1',[pid]);let id=r.rows[0]?.id;if(!id){r=await q(`INSERT INTO marketplace_products(category,provider,provider_product_id,country_code,service_code,name,description,provider_cost_kobo,sale_price_kobo,currency,status,metadata) VALUES('sms',$1,$2,$3,$4,$5,$6,$7,$8,'NGN','active',$9::jsonb) RETURNING id`,[marketplaceConfig.sms.provider||'sociosms',pid,c,s,`${x.country_name||c} · ${s}`,`Live ${s} SMS rental for ${x.country_name||c}.`,moneyKobo(cost),moneyKobo(sale),JSON.stringify(meta)]);id=r.rows[0]?.id;}if(!id)throw Error('Could not prepare the SMS rental');res.json({productId:id,price:sale,country:c,countryName:x.country_name||c,server,stock:Number(x.stock||0)});}catch(e){res.status(e.status||502).json({error:e.message||'Could not prepare SMS rental',code:e.code||'SMS_PROVIDER_ERROR'});}});
 
   app.get('/api/marketplace/live/esim/catalog',async(req,res)=>{try{await schema();const c=String(req.query.country||'').trim().toUpperCase(),p=[],w=["category='esim'","status='active'"];if(c){p.push(c);w.push(`country_code=$${p.length}`);}const r=await q(`SELECT id,country_code,name,description,sale_price_kobo,currency,metadata FROM marketplace_products WHERE ${w.join(' AND ')} ORDER BY country_code,name`,p);res.json({configured:Boolean(marketplaceConfig.esim.apiKey&&marketplaceConfig.esim.baseUrl),products:r.rows.map(x=>({...x,price:Number(x.sale_price_kobo)/100}))});}catch(e){res.status(500).json({error:e.message||'Could not load eSIM catalog'});}});
   app.post('/api/marketplace/live/esim/products',auth,admin,async(req,res)=>{try{await schema();await repairSchema();const{country,name,description,price,provider,providerProductId,metadata}=req.body;if(!country||!name||!Number.isFinite(Number(price))||Number(price)<1)return res.status(400).json({error:'Country, name and price are required'});const r=await q(`INSERT INTO marketplace_products(category,provider,provider_product_id,country_code,name,description,sale_price_kobo,currency,status,metadata) VALUES('esim',$1,$2,$3,$4,$5,$6,'NGN','active',$7::jsonb) RETURNING id`,[provider||marketplaceConfig.esim.provider||'esim-provider',providerProductId||null,String(country).toUpperCase(),name,description||null,moneyKobo(price),JSON.stringify(metadata||{})]);res.json({ok:true,id:r.rows[0].id});}catch(e){res.status(400).json({error:e.message||'Could not add eSIM product'});}});
