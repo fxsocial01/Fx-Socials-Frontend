@@ -82,7 +82,7 @@ export default function NumberServicesPage() {
   };
 
   const loadInitial = async () => {
-    setLoading(true);
+    beginAction('Connecting to digital services…'); setLoading(true);
     try {
       const [f, o, e, email] = await Promise.all([
         req('/api/fleexa/sms/services'),
@@ -96,7 +96,7 @@ export default function NumberServicesPage() {
       setEmailProducts(email.products || email.services || []);
     } catch (err: any) {
       setMessage(err.message || 'Could not load digital services.');
-    } finally { setLoading(false); }
+    } finally { setLoading(false); endAction(); }
   };
 
   useEffect(() => { void loadWallet(); void loadOrders(); void loadInitial(); }, []);
