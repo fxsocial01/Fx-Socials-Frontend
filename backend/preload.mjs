@@ -12,6 +12,9 @@ source=source.replace("app.get('/developers'","app.get('/developers-legacy'");
 if(!source.includes("./api-platform.js"))source="import { registerApiPlatform } from './api-platform.js';\nimport { registerDeveloperPortal } from './developer-portal.js';\nimport { registerTempNumberRoutes } from './temp-number-routes.js';\n"+source;
 if(!source.includes('registerApiPlatform({app,pool,auth,admin})'))source=source.replace('app.listen(PORT','registerApiPlatform({app,pool,auth,admin});\nregisterDeveloperPortal({app});\nregisterTempNumberRoutes({app,pool,auth});\napp.listen(PORT');
 
+const FRONTEND_URL=(process.env.FRONTEND_URL||'https://fx-socials-site.onrender.com').replace(/\/+$/,'');
+const BACKEND_PUBLIC_URL=(process.env.BACKEND_PUBLIC_URL||'https://fx-socials-api.onrender.com').replace(/\/+$/,'');
+
 if(!source.includes('FX_PAYSTACK_CALLBACK_V2')){
   source=source.replace(
     "const FRONTEND_URL=(process.env.FRONTEND_URL||'https://fx-socials-site.onrender.com').replace(/\\/+$/,'');",
