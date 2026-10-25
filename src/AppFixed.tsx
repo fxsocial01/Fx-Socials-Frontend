@@ -18,7 +18,32 @@ export default function AppFixed(){
  const[wallet,setWallet]=useState(0),[orders,setOrders]=useState<any[]>([]),[msg,setMsg]=useState('');
  const logged=Boolean(token());
  const [globalBusy,setGlobalBusy]=useState(false),[globalLabel,setGlobalLabel]=useState('Working on your request…');
- const runGlobal=async(label:string,fn:()=>Promise<any>)=>{if(globalBusy)return;setGlobalBusy(true);setGlobalLabel(label);try{return await fn()}finally{setGlobalBusy(false)}};
+ useEffect(()=>{
+   const originalFetch=window.fetch.bind(window);
+   let pending=0, delayTimer:number|null=null, lastLabel='Loading your data…';
+   const activityLabel=(url:string)=>{
+     if(url.includes('/api/auth/'))return 'Signing you in securely…';
+     if(url.includes('/api/wallet/')||url.includes('/api/manual-topup/'))return 'Connecting securely to payment…';
+     if(url.includes('/api/seller/'))return 'Submitting your listing…';
+     if(url.includes('/api/orders')||url.includes('/api/marketplace/orders/purchase'))return 'Processing your purchase…';
+     if(url.includes('/api/products'))return 'Loading marketplace…';
+     if(url.includes('/api/smm/'))return 'Processing your boosting request…';
+     return 'Loading your data…';
+   };
+   const trackedFetch=(async(input:RequestInfo|URL,init?:RequestInit):Promise<Response>=>{
+     const url=typeof input==='string'?input:input instanceof URL?input.href:input.url;
+     const method=String(init?.method||(input instanceof Request?input.method:'GET')).toUpperCase();
+     const currentPage=location.hash.replace('#/','').split('?')[0]||'home';
+     const specialPage=currentPage==='services'||currentPage==='boosting';
+     const backgroundPoll=(url.includes('/api/fleexa/orders')&&method==='GET')||(url.includes('/api/me/wallet')&&method==='POST');
+     const track=!specialPage&&!backgroundPoll;
+     if(track){pending+=1;lastLabel=activityLabel(url);if(delayTimer!==null)window.clearTimeout(delayTimer);delayTimer=window.setTimeout(()=>{if(pending>0){setGlobalLabel(lastLabel);setGlobalBusy(true)}},250);}
+     try{return await originalFetch(input,init)}
+     finally{if(track){pending=Math.max(0,pending-1);if(pending===0){if(delayTimer!==null)window.clearTimeout(delayTimer);delayTimer=null;setGlobalBusy(false)}}}
+   }) as typeof window.fetch;
+   window.fetch=trackedFetch;
+   return ()=>{if(window.fetch===trackedFetch)window.fetch=originalFetch;if(delayTimer!==null)window.clearTimeout(delayTimer)};
+ },[]);
  const load=async()=>{if(!token())return;try{const w=await req('/api/me/wallet','POST',{sessionToken:token()});setWallet(Number(w.wallet?.balance||0))}catch{}try{const d=await req('/api/fleexa/orders');setOrders(d.orders||[])}catch{}};
  useEffect(()=>{const h=()=>setPage(location.hash.replace('#/','').split('?')[0]||'home');addEventListener('hashchange',h);void load();return()=>removeEventListener('hashchange',h)},[]);
  useEffect(()=>{if(!logged)return;const i=setInterval(load,8000);return()=>clearInterval(i)},[logged]);
@@ -28,6 +53,7 @@ export default function AppFixed(){
  if(page==='admin')return isAdmin()?<AdminPage/>:<main style={S.wrap}><section style={S.card}><h1>Admin access required</h1><p>Your account is not authorized to open the admin dashboard.</p><button style={S.btn} onClick={()=>go('dashboard')}>Back to dashboard</button></section></main>;
  return <div style={S.shell}>
   <header style={S.top}><button style={S.brand} onClick={()=>go(logged?'dashboard':'home')}>FX SOCIALS</button><div style={S.topRight}>{logged&&<button style={S.pill} onClick={()=>go('wallet')}>{money(wallet)}</button>}{logged?<button style={S.btn2} onClick={logout}>Sign out</button>:<button style={S.btn} onClick={()=>go('account')}>Login / Register</button>}</div></header>
+  {globalBusy&&<div role="status" aria-live="polite" style={S.globalLoading}><span style={S.globalSpinner}/><span>{globalLabel}<small style={{display:'block',fontWeight:500,color:'#aaa',marginTop:3}}>FX Socials is working. Please keep this page open.</small></span></div>}
   {globalBusy&&<div role="status" aria-live="polite" style={S.globalLoading}><span style={S.globalSpinner}/><span>{globalLabel}<small style={{display:'block',fontWeight:500,color:'#aaa',marginTop:3}}>FX Socials is working. Please keep this page open.</small></span></div>}
   {msg&&<div style={S.notice}>{msg}<button onClick={()=>setMsg('')} style={S.close}>×</button></div>}
   {page==='home'&&<Home logged={logged}/>}
