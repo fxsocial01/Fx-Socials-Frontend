@@ -63,6 +63,12 @@ export default function NumberServicesPage() {
   const [rentLoading, setRentLoading] = useState(false);
   const [selectionLoading, setSelectionLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [actionLoading, setActionLoading] = useState('');
+  const actionTimer = useRef<number | null>(null);
+  const beginAction = (label: string) => { if (actionTimer.current) window.clearTimeout(actionTimer.current); setActionLoading(label); };
+  const endAction = () => { if (actionTimer.current) window.clearTimeout(actionTimer.current); actionTimer.current = window.setTimeout(() => setActionLoading(''), 250); };
+  useEffect(() => () => { if (actionTimer.current) window.clearTimeout(actionTimer.current); }, []);
+
   const logged = Boolean(token());
 
   const loadWallet = async () => {
@@ -97,51 +103,51 @@ export default function NumberServicesPage() {
 
   const loadPrice = async (s: string) => {
     if (!s) { setPrice(null); return; }
-    setPriceLoading(true); setPrice(null);
+    beginAction('Checking live price…'); setPriceLoading(true); setPrice(null);
     try { setPrice(await req(`/api/fleexa/sms/prices?service=${encodeURIComponent(s)}`)); }
     catch (e: any) { setMessage(e.message); }
-    finally { setPriceLoading(false); }
+    finally { setPriceLoading(false); endAction(); }
   };
 
   useEffect(() => { if (mode === 'us' && service) void loadPrice(service); }, [mode, service]);
 
   const loadDomains = async (site: string) => {
     if (!site) { setEmailDomains([]); return; }
-    setDomainLoading(true);
+    beginAction('Checking available email domains…'); setDomainLoading(true);
     try { const d = await req(`/api/fleexa/email/domains?site=${encodeURIComponent(site)}`); setEmailDomains(d.domains || []); }
     catch (e: any) { setMessage(e.message); }
-    finally { setDomainLoading(false); }
+    finally { setDomainLoading(false); endAction(); }
   };
 
   useEffect(() => { if (mode === 'email' && emailSite) void loadDomains(emailSite); }, [mode, emailSite]);
 
   const loadRentAreas = async () => {
-    setRentLoading(true);
+    beginAction('Checking live rental availability and prices…'); setRentLoading(true);
     try { const d = await req('/api/fleexa/rent/areas'); setAreas(d.areas || []); }
     catch (e: any) { setMessage(e.message); }
-    finally { setRentLoading(false); }
+    finally { setRentLoading(false); endAction(); }
   };
 
   useEffect(() => { if (mode === 'rent' && !areas.length) void loadRentAreas(); }, [mode]);
 
   // Other Numbers intentionally follows: COUNTRY → SERVICE → SERVER → PRICE.
   const loadOtherServices = async () => {
-    setOtherServicesLoading(true); setSelectionLoading(true); setOtherService(''); setOtherServer(''); setOtherServers([]);
+    beginAction('Loading services for the selected country…'); setOtherServicesLoading(true); setSelectionLoading(true); setOtherService(''); setOtherServer(''); setOtherServers([]);
     try {
       const d = await req('/api/marketplace/live/sms/services');
       setOtherServices(d.services || []);
     } catch (e: any) { setMessage(e.message || 'Could not fetch services.'); }
-    finally { setOtherServicesLoading(false); setSelectionLoading(false); }
+    finally { setOtherServicesLoading(false); setSelectionLoading(false); endAction(); }
   };
 
   const loadOtherServers = async (s: string, country: string) => {
     if (!s || !country) return;
-    setServersLoading(true); setSelectionLoading(true); setOtherServers([]); setOtherServer('');
+    beginAction('Checking available servers and prices…'); setServersLoading(true); setSelectionLoading(true); setOtherServers([]); setOtherServer('');
     try {
       const d = await req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(country)}`);
       setOtherServers((d.servers || []).filter((x: any) => Number(x.stock || 0) > 0));
     } catch (e: any) { setMessage(e.message || 'Could not fetch available servers.'); }
-    finally { setServersLoading(false); setSelectionLoading(false); }
+    finally { setServersLoading(false); setSelectionLoading(false); endAction(); }
   };
 
   useEffect(() => {
@@ -171,7 +177,7 @@ export default function NumberServicesPage() {
       setMessage(`US number ${d.order?.phone || ''} purchased. Waiting for the verification code.`);
       await loadOrders();
     } catch (e: any) { setMessage(e.message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); endAction(); }
   };
 
   const buyEmail = async () => {
@@ -231,7 +237,7 @@ export default function NumberServicesPage() {
           <p>Numbers, email, rentals and eSIMs — simple and clear.</p>
         </header>
 
-        {message && <div className="fx-notice"><span>{message}</span><button onClick={() => setMessage('')}>×</button></div>}
+        {(actionLoading || message) && <div className="fx-notice">{actionLoading && <Spinner label={actionLoading} />}{message && <><span>{message}</span><button onClick={() => setMessage('')}>×</button></>}</div>}
 
         <div className="fx-tabs">
           {tabs.map(([id, icon, text]) => (
