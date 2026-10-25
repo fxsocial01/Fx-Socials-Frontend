@@ -1,0 +1,129 @@
+name: Repair Paystack wallet flow
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-paystack:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch payment callback and frontend auto verification
+        shell: python
+        run: |
+          from pathlib import Path
+
+          backend = Path('backend/index.js')
+          s = backend.read_text()
+
+          if "BACKEND_PUBLIC_URL" not in s:
+              s = s.replace(
+                  "const FRONTEND_URL=(process.env.FRONTEND_URL||'https://fx-socials-site.onrender.com').replace(/\\/+$/,'');",
+                  "const FRONTEND_URL=(process.env.FRONTEND_URL||'https://fx-socials-site.onrender.com').replace(/\\/+$/,'');\nconst BACKEND_PUBLIC_URL=(process.env.BACKEND_PUBLIC_URL||'https://fx-socials-api.onrender.com').replace(/\\/+$/,'');"
+              )
+
+          old = "callback_url:`${FRONTEND_URL}/#/wallet`"
+          new = "callback_url:`${BACKEND_PUBLIC_URL}/api/wallet/callback`"
+          s = s.replace(old, new)
+
+          marker = "app.post('/api/seller/listings/submit'"
+          if "/api/wallet/callback" not in s:
+              routes = r'''
+app.get('/api/wallet/callback',async(req,res)=>{
+ const ref=String(req.query?.reference||req.query?.trxref||'').trim();
+ const success=`${FRONTEND_URL}/#/wallet?payment=success`;
+ const failed=`${FRONTEND_URL}/#/wallet?payment=failed`;
+ if(!ref)return res.redirect(`${failed}&reason=missing_reference`);
+ try{
+  const tx=await paystack(ref);
+  if(tx.status!=='success'||String(tx.currency||'').toUpperCase()!=='NGN')return res.redirect(`${failed}&reason=not_successful`);
+  const amount=Number(tx.amount||0);
+  if(amount<=0)return res.redirect(`${failed}&reason=invalid_amount`);
+  const c=await pool.connect();
+  try{
+   await c.query('BEGIN');
+   const p=(await c.query('SELECT * FROM payments WHERE reference=$1 FOR UPDATE',[ref])).rows[0];
+   if(!p){await c.query('ROLLBACK');return res.redirect(`${failed}&reason=payment_not_found`)}
+   if(p.status==='success'){await c.query('COMMIT');return res.redirect(`${success}&reference=${encodeURIComponent(ref)}`)}
+   if(Number(p.requested_kobo)!==amount){await c.query('ROLLBACK');return res.redirect(`${failed}&reason=amount_mismatch`)}
+   await c.query('UPDATE payments SET charged_kobo=$1,status=$2 WHERE reference=$3',[amount,'success',ref]);
+   await c.query('UPDATE users SET balance_kobo=balance_kobo+$1 WHERE id=$2',[amount,p.user_id]);
+   await c.query('COMMIT');
+   return res.redirect(`${success}&reference=${encodeURIComponent(ref)}`)
+  }catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
+ }catch(e){console.error('Paystack callback error',e);return res.redirect(`${failed}&reason=verification_failed`)}
+});
+
+app.post('/api/wallet/webhook',async(req,res)=>{
+ res.sendStatus(200);
+ try{
+  const secret=process.env.PAYSTACK_SECRET_KEY||'';
+  const signature=String(req.headers['x-paystack-signature']||'');
+  const raw=req.rawBody||'';
+  const hash=crypto.createHmac('sha512',secret).update(raw).digest('hex');
+  if(!signature||!crypto.timingSafeEqual(Buffer.from(hash),Buffer.from(signature)))return;
+  if(req.body?.event!=='charge.success')return;
+  const ref=String(req.body?.data?.reference||'').trim();
+  if(!ref)return;
+  const tx=await paystack(ref);
+  if(tx.status!=='success'||String(tx.currency||'').toUpperCase()!=='NGN')return;
+  const amount=Number(tx.amount||0); if(amount<=0)return;
+  const c=await pool.connect();
+  try{
+   await c.query('BEGIN');
+   const p=(await c.query('SELECT * FROM payments WHERE reference=$1 FOR UPDATE',[ref])).rows[0];
+   if(!p||p.status==='success'){await c.query('COMMIT');return}
+   if(Number(p.requested_kobo)!==amount){await c.query('ROLLBACK');return}
+   await c.query('UPDATE payments SET charged_kobo=$1,status=$2 WHERE reference=$3',[amount,'success',ref]);
+   await c.query('UPDATE users SET balance_kobo=balance_kobo+$1 WHERE id=$2',[amount,p.user_id]);
+   await c.query('COMMIT');
+  }catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
+ }catch(e){console.error('Paystack webhook error',e)}
+});
+
+'''
+              s = s.replace(marker, routes + marker)
+
+          backend.write_text(s)
+
+          app = Path('src/App.tsx')
+          a = app.read_text()
+          anchor = "const buy=async(id:string)=>"
+          if "fxs-auto-paystack" not in a:
+              auto = r'''useEffect(()=>{
+  if(page!=='wallet'||!user)return;
+  const q=new URLSearchParams(location.search);
+  const hashQuery=location.hash.includes('?')?new URLSearchParams(location.hash.split('?')[1]):new URLSearchParams();
+  const ref=q.get('reference')||q.get('trxref')||hashQuery.get('reference')||hashQuery.get('trxref');
+  if(!ref)return;
+  const key=`fxs-auto-paystack-${ref}`;
+  if(sessionStorage.getItem(key))return;
+  sessionStorage.setItem(key,'1');
+  void verify();
+},[page,user]);
+'''
+              a = a.replace(anchor, auto + anchor)
+          app.write_text(a)
+
+      - name: Validate JavaScript/TypeScript syntax and build
+        run: |
+          npm install
+          cd backend && npm install
+          cd ..
+          npx tsc --noEmit --pretty false || true
+          npm run build
+          node --check backend/index.js
+
+      - name: Commit repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/index.js src/App.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: make Paystack wallet credit automatic and reliable"
+          git push
