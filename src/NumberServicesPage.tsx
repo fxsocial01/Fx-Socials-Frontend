@@ -170,7 +170,7 @@ export default function NumberServicesPage() {
 
   const buy = async () => {
     if (!requireLogin() || !service || !price?.salePrice) return;
-    beginAction('Submitting your request…'); setBusy(true);
+    beginAction('Submitting your request…'); beginAction('Request sent — reserving your US number…'); setBusy(true);
     try {
       const d = await req('/api/fleexa/sms/buy', 'POST', { service, maxPrice: price.providerPrice });
       setWallet(Number(d.walletBalance || 0));
@@ -182,7 +182,7 @@ export default function NumberServicesPage() {
 
   const buyEmail = async () => {
     if (!requireLogin() || !emailSite || !emailDomain) return;
-    setBusy(true);
+    beginAction('Creating your email order…'); setBusy(true);
     try {
       const d = await req('/api/fleexa/email/buy', 'POST', { site: emailSite, domain: emailDomain });
       setWallet(Number(d.walletBalance || 0)); setMessage(`Email ${d.order?.email || ''} purchased.`); await loadOrders();
@@ -192,7 +192,7 @@ export default function NumberServicesPage() {
 
   const buyRent = async () => {
     if (!requireLogin()) return;
-    setBusy(true);
+    beginAction('Contacting Fleexa to reserve your rental…'); setBusy(true);
     try {
       const d = await req('/api/fleexa/rent/buy', 'POST', { appName: rentApp, time: months });
       setWallet(Number(d.walletBalance || 0)); setMessage(`Rental ${d.order?.number || ''} purchased until ${d.order?.expire_at || 'the expiry date'}.`); await loadOrders();
@@ -202,7 +202,7 @@ export default function NumberServicesPage() {
 
   const buyOther = async () => {
     if (!requireLogin() || !otherService || !otherCountry || !otherServer) return;
-    setBusy(true);
+    beginAction('Preparing your number purchase…'); setBusy(true);
     try {
       const p = await req('/api/marketplace/live/sms/prepare', 'POST', { service: otherService, country: otherCountry, server: otherServer });
       const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.productId, customer: { service: otherService, country: otherCountry, server: otherServer } });
@@ -213,7 +213,7 @@ export default function NumberServicesPage() {
 
   const buyEsim = async (p: any) => {
     if (!requireLogin()) return;
-    setBusy(true);
+    beginAction('Processing your eSIM order…'); setBusy(true);
     try { const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.id, customer: { category: 'esim', country: p.country_code } }); setWallet(Number(d.walletBalance || 0)); setMessage('eSIM purchased successfully.'); }
     catch (e: any) { setMessage(e.message); }
     finally { setBusy(false); }
