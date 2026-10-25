@@ -3,45 +3,63 @@ import { useEffect, useRef, useState } from 'react';
 const API = (import.meta as any).env.VITE_API_BASE_URL || 'https://fx-socials-api.onrender.com';
 const token = () => localStorage.getItem('fxs-session') || '';
 const money = (n: any) => `₦${Number(n || 0).toLocaleString('en-NG')}`;
-async function req(path: string, method = 'GET', body?: any, timeoutMs = 25000) {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const r = await fetch(`${API}${path}`, { method, signal: controller.signal, headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.error || 'Request failed');
-    return d;
-  } catch (e: any) {
-    if (e?.name === 'AbortError') throw new Error('This is taking longer than expected. Please try again.');
-    throw e;
-  } finally { window.clearTimeout(timer); }
+async function req(path: string, method = 'GET', body?: any) {
+  const r = await fetch(`${API}${path}`, { method, headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'Request failed');
+  return d;
 }
 const value = (o: any, ...keys: string[]) => { for (const k of keys) { const v = k.split('.').reduce((a: any, p: string) => a?.[p], o); if (v !== undefined && v !== null && String(v) !== '') return v; } return ''; };
 const age = (raw: any) => { if (!raw) return ''; const d = new Date(raw); if (Number.isNaN(d.getTime())) return ''; const days = Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000)); return days === 0 ? 'Today' : days === 1 ? '1 day ago' : `${days} days ago`; };
-type Step = 'services' | 'countries' | 'servers' | 'buy';
-const busyLabels: Record<Step,string> = { services:'Fetching data…', countries:'Fetching data…', servers:'Fetching data…', buy:'Processing your request…' };
+type Step = 'services' | 'countries' | 'price' | 'servers' | 'buy';
+const busyLabels: Record<Step,string> = { services:'Fetching data…', countries:'Fetching data…', price:'Fetching price & availability…', servers:'Fetching data…', buy:'Processing your request…' };
+
+const OTHER_SERVICES_CACHE = 'fxs-sms-other-services-v1';
+const OTHER_COUNTRIES_CACHE = 'fxs-sms-other-countries-v1';
+const readCache = (key: string, fallback: any[] = []) => { try { const raw = localStorage.getItem(key); const parsed = raw ? JSON.parse(raw) : fallback; return Array.isArray(parsed) ? parsed : fallback; } catch { return fallback; } };
+const writeCache = (key: string, value: any[]) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+const countryCacheKey = (service: string) => `${OTHER_COUNTRIES_CACHE}:${String(service || '').toLowerCase()}`;
 
 export default function UnifiedServicesPage() {
-  const [tab,setTab]=useState('us'),[usServices,setUsServices]=useState<any[]>([]),[otherServices,setOtherServices]=useState<any[]>([]),[service,setService]=useState(''),[otherService,setOtherService]=useState(''),[country,setCountry]=useState(''),[countries,setCountries]=useState<any[]>([]),[servers,setServers]=useState<any[]>([]),[server,setServer]=useState(''),[price,setPrice]=useState(0),[orders,setOrders]=useState<any[]>([]),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState<Step|null>(null),[emailProducts,setEmailProducts]=useState<any[]>([]),[emailSite,setEmailSite]=useState(''),[emailDomain,setEmailDomain]=useState('@outlook.com'),[emailDomains,setEmailDomains]=useState<any[]>([]),[areas,setAreas]=useState<any[]>([]),[rentApp,setRentApp]=useState('WhatsApp'),[months,setMonths]=useState('1'),[esims,setEsims]=useState<any[]>([]);
+  const [tab,setTab]=useState('us'),[usServices,setUsServices]=useState<any[]>([]),[otherServices,setOtherServices]=useState<any[]>(()=>readCache(OTHER_SERVICES_CACHE)),[service,setService]=useState(''),[otherService,setOtherService]=useState(''),[country,setCountry]=useState(''),[countries,setCountries]=useState<any[]>([]),[servers,setServers]=useState<any[]>([]),[server,setServer]=useState(''),[price,setPrice]=useState(0),[orders,setOrders]=useState<any[]>([]),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState<Step|null>(null),[emailProducts,setEmailProducts]=useState<any[]>([]),[emailSite,setEmailSite]=useState(''),[emailDomain,setEmailDomain]=useState('@outlook.com'),[emailDomains,setEmailDomains]=useState<any[]>([]),[areas,setAreas]=useState<any[]>([]),[rentApp,setRentApp]=useState('WhatsApp'),[months,setMonths]=useState('1'),[esims,setEsims]=useState<any[]>([]);
   const logged=Boolean(token());
   const requestId=useRef(0);
   const startLoading=(step:Step)=>{const id=++requestId.current;setLoading(step);return id};
   const finishLoading=(id:number)=>{if(requestId.current===id)setLoading(null)};
   const queryTab=()=>{const m=location.hash.match(/\?tab=([^&]+)/);return m?decodeURIComponent(m[1]):''};
   const loadOrders=async()=>{if(!logged)return;try{const d=await req('/api/fleexa/orders');setOrders(Array.isArray(d.orders)?d.orders:[])}catch{}};
+  const refreshOtherCatalog=async()=>{
+    try {
+      const d=await req('/api/marketplace/live/sms/services');
+      const x=Array.isArray(d.services)?d.services:[];
+      if(x.length){setOtherServices(x);writeCache(OTHER_SERVICES_CACHE,x);}
+      return x;
+    } catch { return []; }
+  };
+  const refreshCountriesInBackground=async(serviceId:string)=>{
+    if(!serviceId)return;
+    try {
+      const d=await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(serviceId)}`);
+      const x=Array.isArray(d.countries)?d.countries:[];
+      if(x.length){writeCache(countryCacheKey(serviceId),x);if(String(otherService).toLowerCase()===String(serviceId).toLowerCase())setCountries(x);}
+    } catch {}
+  };
   const loadAll=async()=>{
     const id=startLoading('services');
     try {
+      const cached=readCache(OTHER_SERVICES_CACHE);
+      if(cached.length)setOtherServices(cached);
       const results=await Promise.allSettled([
-        req('/api/fleexa/sms/services'),req('/api/marketplace/live/sms/services'),
+        req('/api/fleexa/sms/services'),
+        refreshOtherCatalog(),
         req('/api/marketplace/live/esim/catalog'),req('/api/fleexa/email/products'),
         req('/api/fleexa/rent/areas')
       ]);
       const [u,o,e,em,re]=results;
       if(u.status==='fulfilled'){const x=Array.isArray(u.value.services)?u.value.services:[];setUsServices(x);if(x[0])setService(p=>p||(x[0].name||x[0].id||''));}
       else setMessage('US number services could not load. Please retry.');
-      if(o.status==='fulfilled'){const x=Array.isArray(o.value.services)?o.value.services:[];setOtherServices(x);if(x[0])setOtherService(p=>p||String(x[0].id||x[0].code||x[0].name||'').toLowerCase());}
-      else setMessage('International number services are temporarily unavailable. Please retry.');
+      if(o.status==='fulfilled'&&Array.isArray(o.value)&&o.value[0]){const x=o.value;setOtherServices(x);writeCache(OTHER_SERVICES_CACHE,x);if(!otherService)setOtherService(p=>p||String(x[0].id||x[0].code||x[0].name||'').toLowerCase());}
+      else if(cached.length&&!otherService)setOtherService(p=>p||String(cached[0].id||cached[0].code||cached[0].name||'').toLowerCase());
       if(e.status==='fulfilled')setEsims(Array.isArray(e.value.products)?e.value.products:[]);
       if(em.status==='fulfilled')setEmailProducts(Array.isArray(em.value.products)?em.value.products:[]);
       if(re.status==='fulfilled')setAreas(Array.isArray(re.value.areas)?re.value.areas:[]);
@@ -49,8 +67,8 @@ export default function UnifiedServicesPage() {
   };
   useEffect(()=>{const t=queryTab();if(t)setTab(t);void loadAll();void loadOrders();if(!logged)return;const id=window.setInterval(()=>void loadOrders(),10000);return()=>window.clearInterval(id)},[logged]);
   useEffect(()=>{if(tab!=='us'||!service)return;const id=startLoading('servers');setPrice(0);req(`/api/fleexa/sms/prices?service=${encodeURIComponent(service)}`).then(d=>setPrice(Number(d.salePrice||0))).catch(e=>setMessage(e.message||'Could not fetch the live price.')).finally(()=>finishLoading(id));return()=>{requestId.current+=1}},[tab,service]);
-  useEffect(()=>{if(tab!=='other'||!otherService)return;const id=startLoading('countries');setCountry('');setCountries([]);setServers([]);setServer('');setPrice(0);req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(otherService)}`).then(d=>setCountries(Array.isArray(d.countries)?d.countries:[])).catch(e=>setMessage(e.message||'Could not load countries for this service.')).finally(()=>finishLoading(id));return()=>{requestId.current+=1}},[tab,otherService]);
-  useEffect(()=>{if(tab!=='other'||!otherService||!country)return;const id=startLoading('servers');setServers([]);setServer('');setPrice(0);req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(otherService)}&country=${encodeURIComponent(country)}`).then(d=>setServers(Array.isArray(d.servers)?d.servers.filter((x:any)=>Number(x.stock||0)>0):[])).catch(e=>setMessage(e.message||'Could not check stock. Please try another country.')).finally(()=>finishLoading(id));return()=>{requestId.current+=1}},[tab,otherService,country]);
+  useEffect(()=>{if(tab!=='other'||!otherService)return;setCountry('');setServers([]);setServer('');setPrice(0);const cached=readCache(countryCacheKey(otherService));setCountries(cached);void refreshCountriesInBackground(otherService);},[tab,otherService]);
+  useEffect(()=>{if(tab!=='other'||!otherService||!country)return;const id=startLoading('price');setServers([]);setServer('');setPrice(0);req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(otherService)}&country=${encodeURIComponent(country)}`).then(d=>setServers(Array.isArray(d.servers)?d.servers.filter((x:any)=>Number(x.stock||0)>0):[])).catch(e=>setMessage(e.message||'Could not check stock. Please try another country.')).finally(()=>finishLoading(id));return()=>{requestId.current+=1}},[tab,otherService,country]);
   useEffect(()=>{const x=servers.find((s:any)=>String(s.server).toUpperCase()===String(server).toUpperCase());setPrice(Number(x?.salePrice||0))},[server,servers]);
   useEffect(()=>{if(tab!=='email'||!emailSite)return;const id=startLoading('services');setEmailDomains([]);req(`/api/fleexa/email/domains?site=${encodeURIComponent(emailSite)}`).then(d=>setEmailDomains(Array.isArray(d.domains)?d.domains:[])).catch(e=>setMessage(e.message||'Could not load email domains.')).finally(()=>finishLoading(id));return()=>{requestId.current+=1}},[tab,emailSite]);
   const requireLogin=()=>{if(!logged){location.hash='#/account';return false}return true};
@@ -65,15 +83,16 @@ export default function UnifiedServicesPage() {
     {message&&<div style={styles.notice}>{message}<button onClick={()=>setMessage('')} style={styles.close}>×</button></div>}
     <div style={styles.tabs}>{tabs.map(([id,label])=><button key={id} onClick={()=>{setTab(id);setMessage('')}} style={{...styles.tab,...(tab===id?styles.active:{})}}>{label}</button>)}</div><section style={styles.card}>
     {tab==='us'&&<><h2>🇺🇸 Buy US Number</h2><p style={styles.muted}>Choose a service and the live price will be checked automatically.</p><label style={styles.label}>Choose service<select disabled={!!loading||busy} value={service} onChange={e=>setService(e.target.value)} style={styles.select}><option value="">Select service</option>{usServices.map((x:any)=><option key={x.id||x.name} value={x.name||x.id}>{x.name||x.id}</option>)}</select></label>{price>0&&<div style={styles.price}><span>FX SOCIALS PRICE</span><b>{money(price)}</b></div>}<button disabled={busy||!!loading||!price} onClick={()=>void buyUS()} style={styles.primary}>{busy?'Processing…':loading?'Checking live price…':`Buy US number${price?` · ${money(price)}`:''}`}</button></>}
-    {tab==='other'&&<><h2>🌍 Other Numbers</h2><p style={styles.muted}>Live international verification numbers with stock and pricing.</p><label style={styles.label}>Choose service<select disabled={!!loading||busy} value={otherService} onChange={e=>setOtherService(e.target.value)} style={styles.select}><option value="">Select service</option>{otherServices.map((x:any)=>{const id=String(x.id||x.code||x.name||'').toLowerCase();return <option key={id} value={id}>{x.name||x.code||x.id}</option>})}</select></label>
-    {otherService&&<label style={styles.label}>Choose country<select disabled={!!loading||busy} value={country} onChange={e=>setCountry(e.target.value)} style={styles.select}><option value="">Select country</option>{countries.map((x:any)=><option key={x.country_code||x.code||x.name} value={String(x.country_code||x.code||x.name).toUpperCase()}>{x.flag?`${x.flag} `:''}{x.country_name||x.name||x.country_code||x.code}</option>)}</select></label>}
-    {country&&!loading&&servers.length===0&&<div style={styles.empty}>No options are listed yet for this country. Try another country or check again.</div>}
-    {country&&servers.length>0&&<label style={styles.label}>Choose number option<select disabled={!!loading||busy} value={server} onChange={e=>setServer(e.target.value)} style={styles.select}><option value="">Select option</option>{servers.map((x:any)=><option key={x.server} value={x.server}>{String(x.country_name||country)} · {x.server_name||x.server} · {Number(x.stock||0)} available</option>)}</select></label>}
-    {server&&price>0&&<div style={styles.price}><span>FX SOCIALS PRICE</span><b>{money(price)}</b><small>Live option price</small></div>}<button disabled={busy||!!loading||!price||!server} onClick={()=>void buyOther()} style={styles.primary}>{busy?'Processing…':loading?'Checking availability…':`Buy number${price?` · ${money(price)}`:''}`}</button></>}
+    {tab==='other'&&<><h2>🌍 Other Numbers</h2><p style={styles.muted}>Live international verification numbers with stock and pricing.</p><label style={styles.label}>Choose service<select disabled={busy} value={otherService} onChange={e=>setOtherService(e.target.value)} style={styles.select}><option value="">Select service</option>{otherServices.map((x:any)=>{const id=String(x.id||x.code||x.name||'').toLowerCase();return <option key={id} value={id}>{x.name||x.code||x.id}</option>})}</select></label>
+    {otherService&&<label style={styles.label}>Choose country<select disabled={busy} value={country} onChange={e=>setCountry(e.target.value)} style={styles.select}><option value="">Select country</option>{countries.map((x:any)=><option key={x.country_code||x.code||x.name} value={String(x.country_code||x.code||x.name).toUpperCase()}>{x.flag?`${x.flag} `:''}{x.country_name||x.name||x.country_code||x.code}</option>)}</select></label>}
+    {country&&loading==='price'&&<div style={styles.localLoading} role="status" aria-live="polite"><span style={styles.spinner}/><span>Fetching price &amp; availability…</span></div>}
+    {country&&loading!=='price'&&servers.length===0&&<div style={styles.empty}>No options are listed yet for this country. Try another country or check again.</div>}
+    {country&&servers.length>0&&<label style={styles.label}>Choose number option<select disabled={busy||loading==='price'} value={server} onChange={e=>setServer(e.target.value)} style={styles.select}><option value="">Select option</option>{servers.map((x:any)=><option key={x.server} value={x.server}>{String(x.country_name||country)} · {x.server_name||x.server} · {Number(x.stock||0)} available</option>)}</select></label>}
+    {server&&price>0&&<div style={styles.price}><span>FX SOCIALS PRICE</span><b>{money(price)}</b><small>Live option price</small></div>}<button disabled={busy||loading==='price'||!price||!server} onClick={()=>void buyOther()} style={styles.primary}>{busy?'Processing…':loading==='price'?'Fetching price & availability…':`Buy number${price?` · ${money(price)}`:''}`}</button></>}
     {tab==='email'&&<><h2>✉️ Custom Email</h2><p style={styles.muted}>Select a service to check live domain availability.</p><label style={styles.label}>Service/site<select disabled={!!loading||busy} value={emailSite} onChange={e=>setEmailSite(e.target.value)} style={styles.select}><option value="">Select service</option>{emailProducts.map((x:any)=><option key={x.id||x.site||x.name} value={x.site||x.name}>{x.name||x.site}</option>)}</select></label>{emailSite&&<label style={styles.label}>Email domain<select disabled={!!loading||busy} value={emailDomain} onChange={e=>setEmailDomain(e.target.value)} style={styles.select}>{(emailDomains.length?emailDomains:['@outlook.com']).map((x:any)=><option key={x.domain||x} value={x.domain||x}>{x.domain||x}</option>)}</select></label>}<button disabled={busy||!!loading||!emailSite} onClick={()=>void buyEmail()} style={styles.primary}>{busy?'Processing…':loading?'Loading email options…':'Buy custom email'}</button></>}
     {tab==='rent'&&<><h2>📞 Rental Number</h2><p style={styles.muted}>Choose a rental service and period.</p><label style={styles.label}>Service<select disabled={busy} value={rentApp} onChange={e=>setRentApp(e.target.value)} style={styles.select}><option>WhatsApp</option><option>Telegram</option><option>Google</option><option>Instagram</option><option>All access</option></select></label><label style={styles.label}>Months<select disabled={busy} value={months} onChange={e=>setMonths(e.target.value)} style={styles.select}>{Array.from({length:12},(_,i)=><option key={i+1} value={i+1}>{i+1} month{i?'s':''}</option>)}</select></label>{loading&&<div style={styles.empty}>Checking rental availability…</div>}{areas.length>0&&<div style={styles.areaGrid}>{areas.slice(0,8).map((x:any)=><div key={x.id||x.area_code||x.name} style={styles.area}><span>{x.name||x.area_code||'US rental'}</span><b>{money(Number(x.price_ngn||x.rate||x.price||0)*1.4)} / month</b></div>)}</div>}<button disabled={busy||!!loading} onClick={()=>void buyRent()} style={styles.primary}>{busy?'Processing…':'Buy rental number'}</button></>}
     {tab==='esim'&&<><h2>📶 eSIM</h2><p style={styles.muted}>Configured eSIM plans. Availability is loading separately from the rest of the site.</p>{loading&&<div style={styles.empty}>Fetching eSIM plans…</div>}{esims.length?<div style={styles.areaGrid}>{esims.map((x:any)=><div key={x.id} style={styles.esim}><b>{x.name}</b><span>{x.description||''}</span><strong>{money(x.price)}</strong><button disabled={busy||!!loading} onClick={()=>void buyEsim(x)} style={styles.primary}>Buy eSIM · {money(x.price)}</button></div>)}</div>:<div style={styles.empty}>No eSIM plans configured yet.</div>}</>}
-    {(loading||busy)&&<div style={styles.localLoading} role="status" aria-live="polite"><span style={styles.spinner}/><span>{busy?message:busyLabels[loading as Step]}</span></div>}
+    {(loading||busy)&&tab!=='other'&&<div style={styles.localLoading} role="status" aria-live="polite"><span style={styles.spinner}/><span>{busy?message:busyLabels[loading as Step]}</span></div>}
   </section>{logged&&<section style={{marginTop:32}}><h2 style={{margin:0}}>Active Orders</h2><p style={{...styles.muted,margin:'4px 0 0'}}>Your number purchases and verification codes. Auto-refreshing.</p><div style={{display:'grid',gap:14,marginTop:16}}>{orders.length?orders.map((o:any)=><OrderCard key={o.id||o.order_id||`${value(o,'phone','number')}-${value(o,'created_at','createdAt')}`} order={o}/>):<div style={styles.empty}>No number purchases yet.</div>}</div></section>}</div></main>;
 }
 function OrderCard({order:o}:{order:any}){const phone=String(value(o,'phone','number','data.phone')||''),code=String(value(o,'code','otp','sms_code','verification_code','data.code')||''),svc=String(value(o,'service_name','service','app','type')||'WhatsApp'),country=String(value(o,'country_name','country','country_code')||'USA'),amount=Number(value(o,'amount','price','salePrice')||0),status=String(value(o,'status','state')||'').toLowerCase(),done=['completed','complete','success','successful','done','finished','received'].includes(status),copy=async(t:string)=>{if(t)await navigator.clipboard?.writeText(t).catch(()=>{})};return <article style={styles.orderCard}><div style={styles.orderTop}><div><h3 style={{margin:0,fontSize:22}}>{svc}</h3><div style={styles.muted}>{country} · {age(value(o,'created_at','createdAt','created'))}</div></div><div style={{textAlign:'right'}}><strong style={{fontSize:21}}>{money(amount)}</strong><div style={done?styles.done:styles.waiting}>{done?'Completed':'Waiting for code'}</div></div></div><div style={styles.detail}><span>{phone||'Number is being prepared…'}</span>{phone&&<button onClick={()=>void copy(phone)} style={styles.copy}>Copy</button>}</div><div style={styles.detail}><span style={{fontWeight:900,letterSpacing:'.08em'}}>{code||'Waiting for SMS code…'}</span>{code&&<button onClick={()=>void copy(code)} style={styles.copy}>Copy</button>}</div><div style={styles.doneBar}>✓ {done?'Done':'Auto-refreshing for code'}</div></article>}
