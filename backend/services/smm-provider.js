@@ -1,9 +1,11 @@
 import { marketplaceConfig } from './marketplace-config.js';
 
 const timeoutMs=Number(process.env.SMM_PROVIDER_TIMEOUT_MS||30000);
+const serviceCacheTtlMs=Number(process.env.SMM_SERVICE_CACHE_TTL_MS||30000);
 const PROVIDER='smm-africa';
 const config={name:PROVIDER,label:'SMM Africa',baseUrl:String(marketplaceConfig.smm.baseUrl||'https://smm.africa/api/v3').replace(/\/$/,''),apiKey:String(marketplaceConfig.smm.apiKey||'').trim(),bearer:true,currency:'USD',fx:Number(process.env.SMM_PROVIDER_2_USD_TO_NGN||1370)};
 const serviceCache=new Map();
+let serviceCacheAt=0;
 const encoded=id=>`${PROVIDER}:${String(id)}`;
 const decode=value=>{const raw=String(value??'');const prefix=`${PROVIDER}:`;return raw.startsWith(prefix)?{provider:PROVIDER,id:raw.slice(prefix.length)}:{provider:PROVIDER,id:raw};};
 const errorFor=(message,status=502,extra={})=>Object.assign(new Error(String(message||'SMM provider request failed')),{status,...extra});
@@ -27,7 +29,9 @@ async function request(action,params={},idempotencyKey){
 const listFromResponse=d=>Array.isArray(d)?d:Array.isArray(d?.services)?d.services:Array.isArray(d?.data)?d.data:Array.isArray(d?.data?.services)?d.data.services:Array.isArray(d?.result)?d.result:[];
 const firstValue=(obj,keys,fallback='')=>{for(const k of keys){if(obj?.[k]!==undefined&&obj?.[k]!==null&&String(obj[k]).trim()!=='')return obj[k];}return fallback;};
 
-async function services(){
+async function services({force=false}={}){
+ const now=Date.now();
+ if(!force&&serviceCacheAt&&now-serviceCacheAt<serviceCacheTtlMs&&serviceCache.size)return {services:[...serviceCache.values()],errors:[]};
  const d=await request('services');
  const mapped=listFromResponse(d).map(s=>{
   const id=String(firstValue(s,['service','id','service_id','serviceId'],'')).trim();
@@ -36,19 +40,19 @@ async function services(){
   const min=Number(firstValue(s,['min','minimum','min_quantity','minQuantity'],1));
   const max=Number(firstValue(s,['max','maximum','max_quantity','maxQuantity'],Number.MAX_SAFE_INTEGER));
   const item={id:encoded(id),service:encoded(id),provider:PROVIDER,providerName:config.label,providerServiceId:id,name:String(firstValue(s,['name','title'],`Service ${id}`)),category:String(firstValue(s,['category','category_name'],'')).trim(),type:String(firstValue(s,['type','service_type'],'')).trim(),description:String(firstValue(s,['description','details'],'')).trim(),providerRate:rawRate,providerCurrency:config.currency,rate:rateNgn,price:rateNgn,pricePer1000:retailFromRate(rateNgn),min,max,refill:Boolean(s.refill??s.refillable??false),cancel:Boolean(s.cancel??s.cancellable??false)};
-  if(item.providerServiceId&&item.providerRate>0&&item.min>0&&item.max>=item.min)serviceCache.set(item.id,item);return item;
+  return item;
  }).filter(s=>s.providerServiceId&&s.providerRate>0&&s.min>0&&s.max>=s.min);
+ serviceCache.clear();for(const item of mapped)serviceCache.set(item.id,item);serviceCacheAt=Date.now();
  return {services:mapped,errors:[]};
 }
 
-async function add({service,link,quantity}){
- const decoded=decode(service);const meta=serviceCache.get(encoded(decoded.id));
- if(!meta)await services();
- const selected=serviceCache.get(encoded(decoded.id));
+async function add({service,link,quantity,idempotencyKey}={}){
+ const decoded=decode(service);let selected=serviceCache.get(encoded(decoded.id));
+ if(!selected){await services({force:false});selected=serviceCache.get(encoded(decoded.id));}
  if(!selected)throw errorFor('The selected boosting service is no longer available.',404,{provider:PROVIDER});
- const key=`fxs-${Date.now()}-${Math.random().toString(36).slice(2,12)}`;
+ const key=idempotencyKey||`fxs-${Date.now()}-${Math.random().toString(36).slice(2,12)}`;
  const data=await request('add',{service:selected.providerServiceId,link,quantity:String(quantity),idempotency_key:key},key);
- if(data?.order===undefined||data?.order===null||data?.order==='')throw errorFor('Boosting provider did not return an order ID.',502,{provider:PROVIDER});
+ if(data?.order===undefined||data?.order===null||data?.order==='')throw errorFor('Boosting provider did not return an order ID.',502,{provider:PROVIDER,ambiguous:true});
  return {...data,order:`${PROVIDER}:${String(data.order)}`,provider:PROVIDER,providerName:config.label};
 }
 
