@@ -170,7 +170,7 @@ export default function NumberServicesPage() {
 
   const buy = async () => {
     if (!requireLogin() || !service || !price?.salePrice) return;
-    beginAction('Submitting your request…'); beginAction('Request sent — reserving your US number…'); setBusy(true);
+    beginAction('Request sent — reserving your US number…'); setBusy(true);
     try {
       const d = await req('/api/fleexa/sms/buy', 'POST', { service, maxPrice: price.providerPrice });
       setWallet(Number(d.walletBalance || 0));
