@@ -208,7 +208,7 @@ export default function NumberServicesPage() {
       const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.productId, customer: { service: otherService, country: otherCountry, server: otherServer } });
       setWallet(Number(d.walletBalance || 0)); setMessage('Other-country number purchased.'); await loadOrders();
     } catch (e: any) { setMessage(e.message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); endAction(); }
   };
 
   const buyEsim = async (p: any) => {
