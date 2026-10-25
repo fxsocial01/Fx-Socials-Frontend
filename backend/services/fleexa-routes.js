@@ -7,7 +7,7 @@ const kobo=n=>Math.round(Number(n)*100);
 const numberFrom=(obj,keys)=>{for(const key of keys){const n=Number(obj?.[key]);if(Number.isFinite(n)&&n>0)return n;}return 0};
 const normalizeRentArea=(x)=>{const monthly=numberFrom(x,['price_ngn','monthly_price_ngn','monthlyPriceNgn','monthly_price','monthlyPrice','rate_ngn','rate','price','cost_ngn','amount_ngn','amount']);return {...x,price_ngn:monthly,monthly_price_ngn:monthly,sale_price_ngn:sale(monthly)};};
 
-async function fleexa(path,{method='GET',body,retries=method==='GET'?2}={}){
+async function fleexa(path,{method='GET',body,retries=(method==='GET'?2:0)}={}){
   if(!apiKey())throw Object.assign(new Error('Fleexa provider is not configured on the server.'),{status:503,code:'FLEEXA_NOT_CONFIGURED'});
   let last;
   for(let attempt=0;attempt<=retries;attempt++){
