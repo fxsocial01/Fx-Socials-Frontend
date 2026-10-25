@@ -61,6 +61,7 @@ export default function NumberServicesPage() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [domainLoading, setDomainLoading] = useState(false);
   const [rentLoading, setRentLoading] = useState(false);
+  const [selectionLoading, setSelectionLoading] = useState(false);
   const [message, setMessage] = useState('');
   const logged = Boolean(token());
 
@@ -125,22 +126,22 @@ export default function NumberServicesPage() {
 
   // Other Numbers intentionally follows: COUNTRY → SERVICE → SERVER → PRICE.
   const loadOtherServices = async () => {
-    setOtherServicesLoading(true); setOtherService(''); setOtherServer(''); setOtherServers([]);
+    setOtherServicesLoading(true); setSelectionLoading(true); setOtherService(''); setOtherServer(''); setOtherServers([]);
     try {
       const d = await req('/api/marketplace/live/sms/services');
       setOtherServices(d.services || []);
     } catch (e: any) { setMessage(e.message || 'Could not fetch services.'); }
-    finally { setOtherServicesLoading(false); }
+    finally { setOtherServicesLoading(false); setSelectionLoading(false); }
   };
 
   const loadOtherServers = async (s: string, country: string) => {
     if (!s || !country) return;
-    setServersLoading(true); setOtherServers([]); setOtherServer('');
+    setServersLoading(true); setSelectionLoading(true); setOtherServers([]); setOtherServer('');
     try {
       const d = await req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(country)}`);
       setOtherServers((d.servers || []).filter((x: any) => Number(x.stock || 0) > 0));
     } catch (e: any) { setMessage(e.message || 'Could not fetch available servers.'); }
-    finally { setServersLoading(false); }
+    finally { setServersLoading(false); setSelectionLoading(false); }
   };
 
   useEffect(() => {
@@ -255,7 +256,7 @@ export default function NumberServicesPage() {
             <p className="fx-muted">Follow the steps in order: country → service → server → price.</p>
 
             <label>1. Choose country
-              <select value={otherCountry} onChange={e => { setOtherCountry(e.target.value); setOtherService(''); setOtherServer(''); setOtherServers([]); }}>
+              <select value={otherCountry} disabled={otherServicesLoading} onChange={e => { const value=e.target.value; setSelectionLoading(Boolean(value)); setOtherServicesLoading(Boolean(value)); setOtherCountry(value); setOtherService(''); setOtherServer(''); setOtherServers([]); }}>
                 <option value="">Choose country</option>
                 {countries.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
               </select>
@@ -263,8 +264,9 @@ export default function NumberServicesPage() {
 
             {!otherCountry && <div className="fx-hint">Choose a country to start. Services will appear next.</div>}
 
+            {selectionLoading && !otherServicesLoading && !serversLoading && <Spinner label="Preparing your selection…" />}
             {otherCountry && (otherServicesLoading ? <Spinner label="Fetching services…" /> : <label>2. Choose service
-              <select value={otherService} onChange={e => setOtherService(e.target.value)} disabled={otherServicesLoading}>
+              <select value={otherService} onChange={e => { const value=e.target.value; setSelectionLoading(Boolean(value)); setServersLoading(Boolean(value)); setOtherService(value); }} disabled={otherServicesLoading || serversLoading}>
                 <option value="">Choose service</option>
                 {otherServices.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
