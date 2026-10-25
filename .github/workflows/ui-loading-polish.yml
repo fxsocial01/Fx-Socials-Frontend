@@ -1,0 +1,83 @@
+name: FX Socials loading polish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ui-loading-polish.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add clear loading states to Other Numbers
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('src/NumberServicesPage.tsx')
+          s = p.read_text()
+
+          s = s.replace(
+              "const [rentLoading, setRentLoading] = useState(false);",
+              "const [rentLoading, setRentLoading] = useState(false);\n  const [selectionLoading, setSelectionLoading] = useState(false);"
+          )
+
+          s = s.replace(
+              "setOtherServicesLoading(true); setOtherService(''); setOtherServer(''); setOtherServers([]);",
+              "setOtherServicesLoading(true); setSelectionLoading(true); setOtherService(''); setOtherServer(''); setOtherServers([]);"
+          )
+
+          s = s.replace(
+              "finally { setOtherServicesLoading(false); }",
+              "finally { setOtherServicesLoading(false); setSelectionLoading(false); }"
+          )
+
+          s = s.replace(
+              "setServersLoading(true); setOtherServers([]); setOtherServer('');",
+              "setServersLoading(true); setSelectionLoading(true); setOtherServers([]); setOtherServer('');"
+          )
+
+          s = s.replace(
+              "finally { setServersLoading(false); }",
+              "finally { setServersLoading(false); setSelectionLoading(false); }"
+          )
+
+          old = "<select value={otherCountry} onChange={e => { setOtherCountry(e.target.value); setOtherService(''); setOtherServer(''); setOtherServers([]); }}>"
+          new = "<select value={otherCountry} disabled={otherServicesLoading} onChange={e => { const value=e.target.value; setSelectionLoading(Boolean(value)); setOtherServicesLoading(Boolean(value)); setOtherCountry(value); setOtherService(''); setOtherServer(''); setOtherServers([]); }}>"
+          s = s.replace(old, new)
+
+          old = "<select value={otherService} onChange={e => setOtherService(e.target.value)} disabled={otherServicesLoading}>"
+          new = "<select value={otherService} onChange={e => { const value=e.target.value; setSelectionLoading(Boolean(value)); setServersLoading(Boolean(value)); setOtherService(value); }} disabled={otherServicesLoading || serversLoading}>"
+          s = s.replace(old, new)
+
+          marker = "{otherCountry && (otherServicesLoading ? <Spinner label=\"Fetching services…\" />"
+          if marker in s and "Preparing your selection…" not in s:
+              s = s.replace(marker, "{selectionLoading && !otherServicesLoading && !serversLoading && <Spinner label=\"Preparing your selection…\" />}\n            " + marker)
+
+          p.write_text(s)
+
+          css = Path('src/index.css')
+          c = css.read_text()
+          if '.fx-loading{' not in c:
+              c += "\n.fx-loading{display:flex;align-items:center;justify-content:center;gap:10px;padding:14px 12px;margin:10px 0;border:1px solid #292929;background:#101010;border-radius:12px;color:#aaa;font-size:12px}.fx-spinner{width:16px;height:16px;border:2px solid #444;border-top-color:#fff;border-radius:50%;display:inline-block;animation:fx-spin .75s linear infinite;flex:0 0 auto}@keyframes fx-spin{to{transform:rotate(360deg)}}.fx-card select:disabled{opacity:.65;cursor:wait}.fx-card select:disabled + .fx-loading{cursor:wait}"
+              css.write_text(c)
+
+      - name: Validate frontend build
+        run: |
+          npm install
+          npm run build
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/NumberServicesPage.tsx src/index.css
+          git diff --cached --quiet && exit 0
+          git commit -m "ui: add loading feedback to number selections"
+          git push
