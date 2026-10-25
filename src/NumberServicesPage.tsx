@@ -170,7 +170,7 @@ export default function NumberServicesPage() {
 
   const buy = async () => {
     if (!requireLogin() || !service || !price?.salePrice) return;
-    setBusy(true);
+    beginAction('Submitting your request…'); setBusy(true);
     try {
       const d = await req('/api/fleexa/sms/buy', 'POST', { service, maxPrice: price.providerPrice });
       setWallet(Number(d.walletBalance || 0));
@@ -197,7 +197,7 @@ export default function NumberServicesPage() {
       const d = await req('/api/fleexa/rent/buy', 'POST', { appName: rentApp, time: months });
       setWallet(Number(d.walletBalance || 0)); setMessage(`Rental ${d.order?.number || ''} purchased until ${d.order?.expire_at || 'the expiry date'}.`); await loadOrders();
     } catch (e: any) { setMessage(e.message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); endAction(); }
   };
 
   const buyOther = async () => {
