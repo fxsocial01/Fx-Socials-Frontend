@@ -187,7 +187,7 @@ export default function NumberServicesPage() {
       const d = await req('/api/fleexa/email/buy', 'POST', { site: emailSite, domain: emailDomain });
       setWallet(Number(d.walletBalance || 0)); setMessage(`Email ${d.order?.email || ''} purchased.`); await loadOrders();
     } catch (e: any) { setMessage(e.message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); endAction(); }
   };
 
   const buyRent = async () => {
