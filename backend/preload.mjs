@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const file = path.resolve(process.cwd(), 'index.js');
+// Resolve index.js from this preload file instead of process.cwd().
+// Render can execute the service with backend/ as its working directory.
+const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'index.js');
 let source = fs.readFileSync(file, 'utf8');
 
 // Register the platform/legacy routes before the server starts.
