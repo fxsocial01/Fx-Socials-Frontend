@@ -216,7 +216,7 @@ export default function NumberServicesPage() {
     beginAction('Processing your eSIM order…'); beginAction('Processing your eSIM order…'); setBusy(true);
     try { const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.id, customer: { category: 'esim', country: p.country_code } }); setWallet(Number(d.walletBalance || 0)); setMessage('eSIM purchased successfully.'); }
     catch (e: any) { setMessage(e.message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); endAction(); }
   };
 
   const tabs: [Mode, string, string][] = [
