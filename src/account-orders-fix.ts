@@ -6,11 +6,16 @@ window.fetch=async(input:RequestInfo|URL,init?:RequestInit):Promise<Response>=>{
     const fleexaResponse=await originalFetch(input,init);
     const fleexaData=await fleexaResponse.clone().json().catch(()=>({orders:[]}));
     try{
+      const token=localStorage.getItem('fxs-session')||'';
       const accountUrl=url.replace('/api/fleexa/orders','/api/me/orders');
-      const accountResponse=await originalFetch(accountUrl,init);
+      const accountResponse=await originalFetch(accountUrl,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({sessionToken:token})
+      });
       const accountData=await accountResponse.json().catch(()=>({orders:[]}));
       const serviceOrders=Array.isArray(fleexaData?.orders)?fleexaData.orders:[];
-      const accountOrders=Array.isArray(accountData?.orders)?accountData.orders.map((o:any)=>({
+      const accountOrders=accountResponse.ok&&Array.isArray(accountData?.orders)?accountData.orders.map((o:any)=>({
         ...o,
         service:'Social Account',
         type:'Social Account',
