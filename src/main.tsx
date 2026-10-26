@@ -9,6 +9,7 @@ import './admin-access';
 import './dashboard-polish';
 import './customer-ui';
 import './boosting-polish';
+import './account-orders-fix';
 
 const root = createRoot(document.getElementById('root')!);
 root.render(<StrictMode><AppFixed /></StrictMode>);
