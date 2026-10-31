@@ -1,24 +1,27 @@
+// The wallet page now has a first-party manual top-up flow in AppFixed.tsx.
+// Keep this legacy overlay disabled so it cannot mount a second, stale payment form.
 const API_BASE=(import.meta as any).env.VITE_API_BASE_URL||'https://fx-socials-api.onrender.com';
-const MANUAL_KEY='fxs-manual-topup';
-const DEFAULT_ACCOUNT={bankName:'OPay',accountName:'Yasir shehu',accountNumber:'9159373413'};
-const money=(n:number)=>`₦${Number(n||0).toLocaleString('en-NG')}`;
 const token=()=>localStorage.getItem('fxs-session')||'';
-const getManual=()=>{try{return JSON.parse(localStorage.getItem(MANUAL_KEY)||'null')}catch{return null}};
-const saveManual=(x:any)=>localStorage.setItem(MANUAL_KEY,JSON.stringify(x));
-const expiryMs=(v:any)=>{if(typeof v==='number')return v<100000000000?v*1000:v;const n=Date.parse(String(v||''));return Number.isFinite(n)?n:0};
-async function api(path:string,body:any={}){const r=await fetch(`${API_BASE}${path}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionToken:token(),...body})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
-function paymentReference(){const saved=localStorage.getItem('fxs-last-payment-reference')||'',s=new URLSearchParams(location.search),direct=s.get('reference')||s.get('trxref')||'';return direct||saved}
-async function autoVerify(){const t=token(),reference=paymentReference();if(!t||!reference)return;try{const r=await fetch(`${API_BASE}/api/wallet/verify`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionToken:t,reference})}),d=await r.json().catch(()=>({}));if(!r.ok)return;try{await api('/api/wallet/sync')}catch{}localStorage.removeItem('fxs-last-payment-reference');window.dispatchEvent(new CustomEvent('fxs-payment-credited',{detail:d}));window.location.reload()}catch{}}
-function accountBox(a:any){const raw=a||{};const account={bankName:String(raw.bankName||DEFAULT_ACCOUNT.bankName),accountName:String(raw.accountName||DEFAULT_ACCOUNT.accountName),accountNumber:String(raw.accountNumber||DEFAULT_ACCOUNT.accountNumber)};return `<div class="fxs-manual-account" style="display:block!important;visibility:visible!important;opacity:1!important"><div><span>Payment bank</span><strong style="display:block!important;visibility:visible!important;color:inherit!important">${account.bankName}</strong></div><div><span>Account name</span><strong style="display:block!important;visibility:visible!important;color:inherit!important">${account.accountName}</strong></div><div class="fxs-account-number" style="display:block!important;visibility:visible!important"><span>Account number</span><strong style="display:block!important;visibility:visible!important;color:inherit!important;font-size:1.25rem!important;letter-spacing:.04em">${account.accountNumber}</strong></div><button id="fxs-copy-account" class="outline full fxs-copy-account" type="button">Copy account number</button></div>`}
-function manualForm(){return `<div id="fxs-manual-topup" class="form-card fxs-manual-card"><h3>1. Manual Payment</h3><p class="support-hint">Manual payment is the default. Enter the amount you want to add, then send the exact amount to the account shown for approval.</p><label>Amount (₦)<input id="fxs-manual-amount" type="number" min="100" inputmode="numeric" placeholder="Enter amount"/></label><button id="fxs-manual-start" class="primary full" type="button">Continue with Manual Payment</button></div>`}
-function manualPanel(){const x=getManual();if(!x)return manualForm();const expires=expiryMs(x.expiresAt),left=expires-Date.now(),active=x.status==='awaiting_payment'&&expires>0,submitted=x.status==='submitted',expired=x.status==='expired'||(x.status==='awaiting_payment'&&expires>0&&left<=0),rejected=x.status==='rejected';return `<div id="fxs-manual-topup" class="form-card fxs-manual-card"><h3>Manual Payment</h3>${active?`<p>Send exactly <b>${money(x.amount)}</b> to the account below.</p>${accountBox(x.account)}<div id="fxs-manual-countdown" class="fxs-countdown">${formatMs(left)}</div><button id="fxs-manual-paid" class="primary full" type="button">I've paid</button>`:submitted?`<div class="fxs-payment-wait">⏳ <b>Waiting for admin approval</b><br/><span>Payment ID ${x.requestNumber} · ${money(x.amount)}</span></div><button id="fxs-manual-new" class="outline full" type="button">Start New Payment</button>`:expired?`<div>This payment window has expired.</div><button id="fxs-manual-new" class="primary full" type="button">Start New Payment</button>`:rejected?`<div>This payment was declined by admin.</div><button id="fxs-manual-new" class="primary full" type="button">Start New Payment</button>`:`<div>Status: ${x.status}</div><button id="fxs-manual-new" class="primary full" type="button">Start New Payment</button>`}</div>`}
-function formatMs(ms:number){const s=Math.max(0,Math.floor(ms/1000));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`}
-async function recoverManual(){const x=getManual();if(!x||x.status!=='awaiting_payment')return false;if(expiryMs(x.expiresAt)>0)return false;try{const d=await api('/api/manual-topup/status');if(d.request&&d.request.status==='awaiting_payment'&&expiryMs(d.request.expiresAt)>Date.now()){saveManual({...d.request,account:{...DEFAULT_ACCOUNT,...(x.account||{})}});return true}}catch{}localStorage.removeItem(MANUAL_KEY);return true}
-async function startManual(){const input=document.getElementById('fxs-manual-amount') as HTMLInputElement|null,n=Number(input?.value||0);if(!Number.isFinite(n)||n<100){alert('Enter an amount of at least ₦100.');return}try{const d=await api('/api/manual-topup/request',{amountNaira:n});saveManual({...d.request,account:{...DEFAULT_ACCOUNT,...(d.account||{})}});renderManual();monitor()}catch(e:any){alert(e.message)}}
-async function submitManual(){const x=getManual();if(!x)return;try{const d=await api('/api/manual-topup/paid',{requestId:x.id});saveManual({...x,status:'submitted',expiresAt:d.request?.expiresAt||x.expiresAt});renderManual();if(d.whatsappUrl)window.open(d.whatsappUrl,'_blank','noopener,noreferrer')}catch(e:any){alert(e.message)}}
-function newManual(){localStorage.removeItem(MANUAL_KEY);const old=document.getElementById('fxs-manual-topup');if(old)old.remove();renderManual()}
-function renderManual(){if(document.querySelector('[data-fx-wallet-fixed="true"]'))return;if(!location.hash.startsWith('#/wallet'))return;const old=document.getElementById('fxs-manual-topup');if(old)old.remove();const forms=[...document.querySelectorAll('.form-card')],walletForm=forms[forms.length-1];if(!walletForm)return;walletForm.insertAdjacentHTML('beforebegin',manualPanel());document.getElementById('fxs-manual-start')?.addEventListener('click',()=>void startManual());document.getElementById('fxs-manual-paid')?.addEventListener('click',()=>void submitManual());document.getElementById('fxs-manual-new')?.addEventListener('click',()=>newManual());document.getElementById('fxs-copy-account')?.addEventListener('click',async()=>{const x=getManual(),account={...DEFAULT_ACCOUNT,...(x?.account||{})};try{await navigator.clipboard.writeText(account.accountNumber)}catch{}})}
-let timer:number|undefined;function monitor(){if(timer)clearInterval(timer);timer=window.setInterval(async()=>{if(document.querySelector('[data-fx-wallet-fixed="true"]'))return;const x=getManual();if(!x)return;const el=document.getElementById('fxs-manual-countdown');if(x.status==='awaiting_payment'&&el){const e=expiryMs(x.expiresAt);if(!e){await recoverManual();renderManual();return}const left=Math.max(0,e-Date.now());el.textContent=formatMs(left);if(left<=0){saveManual({...x,status:'expired'});renderManual();return}}if(x.status==='submitted'){try{const d=await api('/api/manual-topup/status');if(d.request?.status&&d.request.status!==x.status){saveManual({...x,status:d.request.status});renderManual()}}catch{}}},1000)}
-async function mount(){if(location.hash.startsWith('#/wallet')&&!document.querySelector('[data-fx-wallet-fixed="true"]')){await recoverManual();if(!document.querySelector('[data-fx-wallet-fixed="true"]')&&!document.getElementById('fxs-manual-topup'))renderManual();if(getManual())monitor()}}
-void autoVerify();setTimeout(()=>void mount(),300);addEventListener('hashchange',()=>setTimeout(()=>void mount(),300));
-const observer=new MutationObserver(()=>{if(location.hash.startsWith('#/wallet')&&!document.querySelector('[data-fx-wallet-fixed="true"]'))setTimeout(()=>void renderManual(),50)});observer.observe(document.body,{childList:true,subtree:true});
+
+async function autoVerify(){
+  const reference = new URLSearchParams(location.search).get('reference')
+    || new URLSearchParams(location.search).get('trxref')
+    || localStorage.getItem('fxs-last-payment-reference');
+  if (!token() || !reference) return;
+  try {
+    const response = await fetch(`${API_BASE}/api/wallet/verify`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({sessionToken:token(),reference})
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok) return;
+    localStorage.removeItem('fxs-last-payment-reference');
+    window.dispatchEvent(new CustomEvent('fxs-payment-credited',{detail:data}));
+    window.location.reload();
+  } catch (error) {
+    console.error('Wallet payment verification failed:',error);
+  }
+}
+
+void autoVerify();
