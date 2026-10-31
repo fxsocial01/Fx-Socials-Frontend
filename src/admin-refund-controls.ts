@@ -6,8 +6,9 @@ function isAdmin(){try{const u=JSON.parse(localStorage.getItem('fxs-user')||'nul
 function el(tag:string,props:any={},text=''){const x=document.createElement(tag) as any;Object.entries(props).forEach(([k,v])=>{if(k==='className')x.className=v;else Object.assign(x,k==='style'?x.style:{[k]:v})});if(text)x.textContent=text;return x}
 async function install(){
  if(!isAdmin()||document.getElementById('fxs-refund-controls'))return;
- const h=[...document.querySelectorAll('h2')].find((x:any)=>String(x.textContent||'').trim().toLowerCase()==='admin dashboard');
- const list=document.querySelector('.admin-list') as HTMLElement|null;if(!h||!list)return;
+ const heading=[...document.querySelectorAll('h1,h2,h3')].find((x:any)=>String(x.textContent||'').trim().toLowerCase()==='admin dashboard');
+ const main=(heading?.closest('main')||document.querySelector('main')) as HTMLElement|null;
+ if(!heading||!main)return;
  const box=el('section',{id:'fxs-refund-controls',style:{margin:'16px 0',padding:'18px',border:'1px solid #ddd',borderRadius:'16px',background:'#fff',color:'#111'}});
  box.appendChild(el('h3',{style:{margin:'0 0 6px',fontSize:'21px'}},'Customer Account Controls'));
  box.appendChild(el('p',{style:{margin:'0 0 14px',color:'#666'}},'Refund a wallet after an external refund, or freeze/block a customer. Every admin action is audited.'));
@@ -26,7 +27,9 @@ async function install(){
  const unblock=el('button',{type:'button',style:{padding:'11px 14px',border:0,borderRadius:'9px',background:'#15803d',color:'#fff',fontWeight:'800',cursor:'pointer'}},'Unblock');
  actions.append(full,refund,freeze,unfreeze,block,unblock);box.appendChild(actions);
  box.appendChild(el('h4',{style:{margin:'18px 0 8px'}},'Recent Admin Audit'));
- const audit=el('div',{style:{maxHeight:'260px',overflowY:'auto',fontSize:'13px'}});box.appendChild(audit);list.prepend(box);
+ const audit=el('div',{style:{maxHeight:'260px',overflowY:'auto',fontSize:'13px'}});box.appendChild(audit);
+ const header=heading.closest('header')||heading.parentElement;
+ if(header?.parentElement===main)main.insertBefore(box,header.nextSibling);else main.prepend(box);
  let users:any[]=[];
  function selected(){return users.find(x=>x.userId===user.value)}
  function update(){const x=selected();info.textContent=x?`Current wallet: ₦${Number(x.balance||0).toLocaleString('en-NG',{minimumFractionDigits:2})} · Status: ${String(x.controlStatus||'active').toUpperCase()}`:'Select a customer'}
