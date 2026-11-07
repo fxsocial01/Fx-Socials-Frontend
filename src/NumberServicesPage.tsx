@@ -48,8 +48,10 @@ export default function NumberServicesPage() {
   const [emailDomains, setEmailDomains] = useState<any[]>([]);
   const [otherServices, setOtherServices] = useState<any[]>([]);
   const [otherCountry, setOtherCountry] = useState('');
+  const [otherCountries, setOtherCountries] = useState<any[]>([]);
   const [otherService, setOtherService] = useState('');
   const [serviceSearch, setServiceSearch] = useState('');
+  const [otherServiceSearch, setOtherServiceSearch] = useState('');
   const [countrySearch, setCountrySearch] = useState('');
   const [rentServices, setRentServices] = useState<any[]>([]);
   const [rentCountries, setRentCountries] = useState<any[]>([]);
@@ -177,14 +179,24 @@ export default function NumberServicesPage() {
   };
   useEffect(() => { if (mode === 'proxy' && !proxies.length) void loadProxyCatalog(); }, [mode]);
 
-  // Other Numbers intentionally follows: COUNTRY → SERVICE → SERVER → PRICE.
+  // SocioSMS requires SERVICE → COUNTRY → SERVER. Use its live catalog rather than a hard-coded country list.
+  const loadOtherCountries = async (s: string) => {
+    if (!s) { setOtherCountries([]); return; }
+    beginAction('Loading countries for this service…'); setOtherServicesLoading(true); setOtherCountries([]); setOtherCountry(''); setOtherServer(''); setOtherServers([]);
+    try {
+      const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`);
+      setOtherCountries(d.countries || []);
+    } catch (e: any) { setMessage(e.message || 'Could not fetch countries for this service.'); }
+    finally { setOtherServicesLoading(false); endAction(); }
+  };
+
   const loadOtherServices = async () => {
-    beginAction('Loading services for the selected country…'); setOtherServicesLoading(true); setSelectionLoading(true); setOtherService(''); setOtherServer(''); setOtherServers([]);
+    beginAction('Loading all SocioSMS services…'); setOtherServicesLoading(true);
     try {
       const d = await req('/api/marketplace/live/sms/services');
       setOtherServices(d.services || []);
     } catch (e: any) { setMessage(e.message || 'Could not fetch services.'); }
-    finally { setOtherServicesLoading(false); setSelectionLoading(false); endAction(); }
+    finally { setOtherServicesLoading(false); endAction(); }
   };
 
   const loadOtherServers = async (s: string, country: string) => {
@@ -198,8 +210,12 @@ export default function NumberServicesPage() {
   };
 
   useEffect(() => {
-    if (mode === 'other' && otherCountry) void loadOtherServices();
-  }, [mode, otherCountry]);
+    if (mode === 'other' && !otherServices.length) void loadOtherServices();
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode === 'other' && otherService) void loadOtherCountries(otherService);
+  }, [mode, otherService]);
 
   useEffect(() => {
     if (mode === 'other' && otherService && otherCountry) void loadOtherServers(otherService, otherCountry);
@@ -317,24 +333,21 @@ export default function NumberServicesPage() {
 
           {mode === 'other' && <>
             <h2>🌍 Other Numbers</h2>
-            <p className="fx-muted">Follow the steps in order: country → service → server → price.</p>
+            <p className="fx-muted">Choose a live SocioSMS service, then its supported country and server.</p>
 
-            <label>1. Choose country
-              <input type="search" value={countrySearch} onChange={e => setCountrySearch(e.target.value)} placeholder="Search countries…" />
-              <select value={otherCountry} disabled={otherServicesLoading} onChange={e => { const value=e.target.value; setSelectionLoading(Boolean(value)); setOtherServicesLoading(Boolean(value)); setOtherCountry(value); setOtherService(''); setOtherServer(''); setOtherServers([]); }}>
-                <option value="">Choose country</option>
-                {countries.filter(([, name]) => name.toLowerCase().includes(countrySearch.toLowerCase())).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
-              </select>
-            </label>
-
-            {!otherCountry && <div className="fx-hint">Choose a country to start. Services will appear next.</div>}
-
-            {selectionLoading && !otherServicesLoading && !serversLoading && <Spinner label="Preparing your selection…" />}
-            {otherCountry && (otherServicesLoading ? <Spinner label="Fetching services…" /> : <label>2. Choose service
-              <input type="search" value={serviceSearch} onChange={e => setServiceSearch(e.target.value)} placeholder="Search services…" />
-              <select value={otherService} onChange={e => { const value=e.target.value; setSelectionLoading(Boolean(value)); setServersLoading(Boolean(value)); setOtherService(value); }} disabled={otherServicesLoading || serversLoading}>
+            {otherServicesLoading && !otherServices.length ? <Spinner label="Fetching SocioSMS services…" /> : <label>1. Choose service
+              <input type="search" value={otherServiceSearch} onChange={e => setOtherServiceSearch(e.target.value)} placeholder="Search all SocioSMS services…" />
+              <select value={otherService} onChange={e => { setOtherService(e.target.value); setOtherCountry(''); setOtherCountries([]); setOtherServer(''); setOtherServers([]); }} disabled={otherServicesLoading}>
                 <option value="">Choose service</option>
-                {otherServices.filter(s => String(s.name || s.id).toLowerCase().includes(serviceSearch.toLowerCase())).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {otherServices.filter(s => String(s.name || s.id).toLowerCase().includes(otherServiceSearch.toLowerCase())).map(s => <option key={s.id || s.name} value={s.id || s.name}>{s.name || s.id}</option>)}
+              </select>
+            </label>}
+
+            {otherService && (otherServicesLoading ? <Spinner label="Fetching supported countries…" /> : <label>2. Choose country
+              <input type="search" value={countrySearch} onChange={e => setCountrySearch(e.target.value)} placeholder="Search available countries…" />
+              <select value={otherCountry} onChange={e => { setOtherCountry(e.target.value); setOtherServer(''); setOtherServers([]); }} disabled={!otherCountries.length}>
+                <option value="">Choose country</option>
+                {otherCountries.filter(c => String(c.country_name || c.name || c.country_code || c.code).toLowerCase().includes(countrySearch.toLowerCase())).map(c => <option key={c.country_code || c.code} value={c.country_code || c.code}>{c.flag || ''} {c.country_name || c.name || c.country_code || c.code} · {Number(c.stock || 0)} in stock</option>)}
               </select>
             </label>)}
 
@@ -361,9 +374,9 @@ export default function NumberServicesPage() {
           </>}
 
           {mode === 'rent' && <>
-            <h2>📞 Rental Number</h2><p className="fx-muted">Longer-lived SocioSMS numbers. Select service, country and server.</p>
-            <label>Choose service<input type="search" value={rentServiceSearch} onChange={e => setRentServiceSearch(e.target.value)} placeholder="Search rental services…" /><select value={rentService} onChange={e => { setRentService(e.target.value); setRentCountry(''); setRentServer(''); }}>{rentServices.filter(s => String(s.name || s.id).toLowerCase().includes(rentServiceSearch.toLowerCase())).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
-            {rentService && <label>Choose country<input type="search" value={rentCountrySearch} onChange={e => setRentCountrySearch(e.target.value)} placeholder="Search countries…" /><select value={rentCountry} onChange={e => { setRentCountry(e.target.value); setRentServer(''); }}><option value="">Choose country</option>{rentCountries.filter(c => String(c.country_name || c.country_code).toLowerCase().includes(rentCountrySearch.toLowerCase())).map(c => <option key={c.country_code} value={c.country_code}>{c.flag || ''} {c.country_name} · {Number(c.stock || 0)} in stock</option>)}</select></label>}
+            <h2>📞 Rental Number</h2><p className="fx-muted">Rent a number directly through the SocioSMS rental API. Choose a service, country and server.</p>
+            <label>Choose service<input type="search" value={rentServiceSearch} onChange={e => setRentServiceSearch(e.target.value)} placeholder="Search rental services…" /><select value={rentService} onChange={e => { setRentService(e.target.value); setRentCountry(''); setRentCountrySearch(''); setRentServer(''); }}><option value="">Choose service</option>{rentServices.filter(s => String(s.name || s.id).toLowerCase().includes(rentServiceSearch.toLowerCase())).map(s => <option key={s.id || s.name} value={s.id || s.name}>{s.name || s.id}</option>)}</select></label>
+            {rentService && <label>Choose country<input type="search" value={rentCountrySearch} onChange={e => setRentCountrySearch(e.target.value)} placeholder="Search available countries…" /><select value={rentCountry} onChange={e => { setRentCountry(e.target.value); setRentServer(''); }}><option value="">Choose country</option>{rentCountries.filter(c => String(c.country_name || c.name || c.country_code || c.code).toLowerCase().includes(rentCountrySearch.toLowerCase())).map(c => <option key={c.country_code || c.code} value={c.country_code || c.code}>{c.flag || ''} {c.country_name || c.name || c.country_code || c.code} · {Number(c.stock || 0)} in stock</option>)}</select></label>}
             {rentService && rentCountry && <label>Choose server<select value={rentServer} onChange={e => setRentServer(e.target.value)}><option value="">Choose server</option>{rentServers.map(s => <option key={s.server} value={s.server}>{s.server_name || `Server ${s.server}`} · {Number(s.stock || 0)} in stock · {money(s.salePrice)}</option>)}</select></label>}
             <label>Rental period<select value={months} onChange={e => setMonths(e.target.value)}><option value="1">One service session</option></select></label>
             <button disabled={busy || rentLoading || !rentServer} onClick={buyRent} className="fx-primary">{busy ? 'Getting rental…' : 'Buy rental number'}</button>
@@ -386,7 +399,7 @@ export default function NumberServicesPage() {
           {mode === 'cards' && <><h2>💳 Virtual Cards</h2><p className="fx-muted">Virtual card issuance requires a verified Fleexa card-API integration. This option will become available once Fleexa provides reseller endpoints and customer KYC/consent flows.</p><div className="fx-empty">Card API integration is not enabled. No payment will be taken.</div></>}
         </section>
 
-        {orders.length > 0 && <section className="fx-orders"><h2>Recent orders</h2>{orders.map(o => <div className="fx-order" key={o.id}>{o.type} · {o.phone || o.email || o.number || 'Processing'} · {money(o.amount)} · {o.status}</div>)}</section>}
+        {orders.length > 0 && <section className="fx-orders"><h2>Recent orders</h2>{orders.map(o => <div className="fx-order" key={o.id}>{o.category || o.type || 'Digital service'} · {o.provider_payload?.phone || o.phone || o.provider_payload?.number || o.email || o.number || 'Processing'} · {money(o.amount ?? Number(o.amount_kobo || 0) / 100)} · {o.status}</div>)}</section>}
       </div>
 
       <style>{`
