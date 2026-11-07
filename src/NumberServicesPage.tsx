@@ -96,7 +96,16 @@ export default function NumberServicesPage() {
 
   const loadOrders = async () => {
     if (!logged) return;
-    try { const d = await req('/api/fleexa/orders'); setOrders(d.orders || []); } catch {}
+    const results = await Promise.allSettled([
+      req('/api/fleexa/orders'),
+      req('/api/marketplace/orders'),
+    ]);
+    const fleexaOrders = results[0].status === 'fulfilled' ? (results[0].value.orders || []) : [];
+    const marketplaceOrders = results[1].status === 'fulfilled' ? (results[1].value.orders || []) : [];
+    setOrders([
+      ...fleexaOrders.map((o: any) => ({ ...o, source: 'Fleexa' })),
+      ...marketplaceOrders.map((o: any) => ({ ...o, source: 'SocioSMS' })),
+    ].sort((a: any, b: any) => new Date(b.created_at || b.createdAt || 0).getTime() - new Date(a.created_at || a.createdAt || 0).getTime()).slice(0, 25));
   };
 
   const loadInitial = async () => {
@@ -399,7 +408,7 @@ export default function NumberServicesPage() {
           {mode === 'cards' && <><h2>💳 Virtual Cards</h2><p className="fx-muted">Virtual card issuance requires a verified Fleexa card-API integration. This option will become available once Fleexa provides reseller endpoints and customer KYC/consent flows.</p><div className="fx-empty">Card API integration is not enabled. No payment will be taken.</div></>}
         </section>
 
-        {orders.length > 0 && <section className="fx-orders"><h2>Recent orders</h2>{orders.map(o => <div className="fx-order" key={o.id}>{o.category || o.type || 'Digital service'} · {o.provider_payload?.phone || o.phone || o.provider_payload?.number || o.email || o.number || 'Processing'} · {money(o.amount ?? Number(o.amount_kobo || 0) / 100)} · {o.status}</div>)}</section>}
+        {orders.length > 0 && <section className="fx-orders"><h2>Recent orders</h2>{orders.map(o => <div className="fx-order" key={o.id}>{o.source || o.category || o.type || 'Digital service'} · {o.provider_payload?.phone || o.phone || o.provider_payload?.number || o.email || o.number || o.provider_payload?.service || 'Processing'} · {money(o.amount ?? Number(o.amount_kobo || o.amountKobo || 0) / 100)} · {o.status}</div>)}</section>}
       </div>
 
       <style>{`
