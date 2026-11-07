@@ -98,11 +98,30 @@ export default function NumberServicesPage() {
 
   const loadOrders = async () => {
     if (!token()) { setOrders([]); return; }
-    try {
-      const result = await req('/api/transactions');
-      setOrders((result.transactions || []).slice(0, 50));
-    } catch (error: any) {
-      setMessage(error.message || 'Could not load transaction history.');
+    const [historyResult, rentalsResult] = await Promise.allSettled([
+      req('/api/transactions'),
+      req('/api/marketplace/orders'),
+    ]);
+    const history = historyResult.status === 'fulfilled' ? (historyResult.value.transactions || []) : [];
+    const rentals = rentalsResult.status === 'fulfilled' ? (rentalsResult.value.orders || []) : [];
+    const byId = new Map<string, any>();
+    history.forEach((order: any) => byId.set(String(order.id), order));
+    // Provider-synced rental data is authoritative for the number, live status and incoming OTP.
+    rentals.forEach((order: any) => byId.set(String(order.id), {
+      ...(byId.get(String(order.id)) || {}),
+      ...order,
+      source: order.provider || 'SocioSMS',
+      category: 'sms',
+      phone: order.provider_payload?.phone || order.provider_payload?.number || order.phone,
+      provider_payload: order.provider_payload || {},
+      amount: order.amount ?? Number(order.amount_kobo || 0) / 100,
+    }));
+    const merged = [...byId.values()].sort((a, b) =>
+      new Date(b.created_at || b.createdAt || 0).getTime() - new Date(a.created_at || a.createdAt || 0).getTime()
+    );
+    setOrders(merged.slice(0, 50));
+    if (historyResult.status === 'rejected' && rentalsResult.status === 'rejected') {
+      setMessage((historyResult.reason as any)?.message || 'Could not load transaction history.');
     }
   };
 
@@ -129,6 +148,16 @@ export default function NumberServicesPage() {
   };
 
   useEffect(() => { void loadWallet(); void loadOrders(); void loadInitial(); }, []);
+
+  const hasActiveSmsOrders = orders.some((order: any) =>
+    order.category === 'sms' && ['active', 'received', 'waiting'].includes(String(order.status || '').toLowerCase()) &&
+    Boolean(order.provider_order_id || order.order_reference)
+  );
+  useEffect(() => {
+    if (!logged || !hasActiveSmsOrders) return;
+    const timer = window.setInterval(() => { void loadOrders(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [logged, hasActiveSmsOrders]);
 
   const loadPrice = async (s: string) => {
     if (!s) { setPrice(null); return; }
@@ -290,8 +319,12 @@ export default function NumberServicesPage() {
     beginAction('Preparing your number purchase…'); setBusy(true);
     try {
       const p = await req('/api/marketplace/live/sms/prepare', 'POST', { service: otherService, country: otherCountry, server: otherServer });
-      const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.productId, customer: { service: otherService, country: otherCountry, server: otherServer } });
-      setWallet(Number(d.walletBalance || 0)); setMessage('Other-country number purchased.'); await loadOrders();
+      if (!p.productId) throw new Error('Could not prepare this number. Refresh the live prices and try again.');
+      const d = await req('/api/marketplace/live/sms/rentals', 'POST', { service: otherService, country: otherCountry, server: otherServer });
+      const number = d.rental?.phone || d.rental?.number || '';
+      setWallet(Number(d.walletBalance || 0));
+      setMessage(number ? `Number purchased: ${number}. Waiting for your verification code…` : 'Number purchased. Waiting for provider number details…');
+      await loadOrders();
     } catch (e: any) { setMessage(e.message); }
     finally { setBusy(false); endAction(); }
   };
@@ -411,11 +444,24 @@ export default function NumberServicesPage() {
           {mode === 'cards' && <><h2>💳 Virtual Cards</h2><p className="fx-muted">Virtual card issuance requires a verified Fleexa card-API integration. This option will become available once Fleexa provides reseller endpoints and customer KYC/consent flows.</p><div className="fx-empty">Card API integration is not enabled. No payment will be taken.</div></>}
         </section>
 
-        {orders.length > 0 && <section className="fx-orders"><h2>Recent orders</h2>{orders.map(o => <div className="fx-order" key={o.id}>{o.source || o.category || o.type || 'Digital service'} · {o.provider_payload?.phone || o.phone || o.provider_payload?.number || o.email || o.number || o.provider_payload?.service || 'Processing'} · {money(o.amount ?? Number(o.amount_kobo || o.amountKobo || 0) / 100)} · {o.status}</div>)}</section>}
+        {orders.length > 0 && <section className="fx-orders"><h2>Recent orders</h2>{orders.map(o => {
+          const payload = o.provider_payload || {};
+          const phone = payload.phone || payload.number || o.phone || o.number;
+          const code = payload.code || payload.otp || payload.sms_code || payload.verification_code || payload.activation_code;
+          const smsMessage = payload.message || payload.sms || payload.text;
+          return <div className="fx-order" key={o.id}>
+            <strong>{o.source || o.category || o.type || 'Digital service'}</strong>
+            <div>{phone || o.email || payload.service || o.service || 'Processing'}</div>
+            <div>{money(o.amount ?? Number(o.amount_kobo || o.amountKobo || 0) / 100)} · {o.status}</div>
+            {code && <div className="fx-code">Verification code: <strong>{String(code)}</strong></div>}
+            {!code && smsMessage && <div className="fx-code">{String(smsMessage)}</div>}
+            {o.category === 'sms' && ['active','waiting'].includes(String(o.status || '').toLowerCase()) && <small>Waiting for SMS · checking automatically every 5 seconds</small>}
+          </div>;
+        })}</section>}
       </div>
 
       <style>{`
-        *{box-sizing:border-box}.fx-page{min-height:100vh;background:#050505;color:#fff;padding:18px 0 70px;font-family:inherit}.fx-wrap{width:min(940px,100%);margin:auto;padding:0 18px}.fx-top{display:flex;justify-content:space-between;align-items:center;gap:12px}.fx-back,.fx-wallet,.fx-notice button{border:0;background:transparent;color:#aaa}.fx-back{font-size:16px;padding:10px 0}.fx-wallet{background:#111;border:1px solid #292929;border-radius:999px;padding:10px 14px;color:#fff;font-weight:800}.fx-header{padding:28px 0 18px}.fx-eyebrow{font-size:11px;letter-spacing:.16em;font-weight:900;color:#777}.fx-header h1{font-size:clamp(40px,8vw,64px);line-height:1;letter-spacing:-.055em;margin:9px 0}.fx-header p,.fx-muted{color:#888;margin:0;line-height:1.55}.fx-notice{margin:12px 0;padding:13px 15px;border:1px solid #303030;border-radius:13px;background:#111;display:flex;justify-content:space-between;gap:12px;font-size:14px}.fx-notice button{font-size:22px;padding:0;cursor:pointer}.fx-tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin:12px 0 14px}.fx-tab{min-height:68px;border:1px solid #292929;border-radius:15px;background:#0d0d0d;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:12px;cursor:pointer}.fx-tab span{font-size:19px}.fx-tab.active{background:#fff;color:#050505;border-color:#fff}.fx-card{border:1px solid #292929;border-radius:20px;background:#0b0b0b;padding:20px}.fx-card h2{font-size:24px;margin:0 0 7px;letter-spacing:-.02em}.fx-card label{display:block;margin-top:18px;color:#aaa;font-size:14px;font-weight:700}.fx-card select,.fx-card input{display:block;width:100%;height:52px;margin-top:7px;padding:0 14px;border:1px solid #333;border-radius:13px;background:#151515;color:#fff;font-size:16px;outline:none}.fx-card select:focus,.fx-card input:focus{border-color:#777}.fx-loading{display:flex;align-items:center;gap:10px;margin-top:15px;padding:14px 15px;border:1px solid #292929;border-radius:13px;background:#101010;color:#aaa}.fx-spinner{width:17px;height:17px;border:2px solid #3b3b3b;border-top-color:#fff;border-radius:50%;display:inline-block;animation:fxspin .75s linear infinite;flex:0 0 auto}.fx-hint,.fx-empty{margin-top:14px;padding:13px 14px;border-radius:12px;background:#111;border:1px solid #292929;color:#777;font-size:14px;line-height:1.45}.fx-price{margin-top:16px;padding:17px;border-radius:14px;background:#151515;border:1px solid #292929;display:flex;flex-direction:column;gap:3px}.fx-price small{color:#999;font-weight:800;letter-spacing:.08em}.fx-price strong{font-size:29px;letter-spacing:-.03em}.fx-price span{color:#777;font-size:13px}.fx-price-large{margin-top:18px}.fx-primary{width:100%;min-height:52px;margin-top:17px;border:0;border-radius:13px;background:#fff;color:#050505;font-size:15px;font-weight:900;padding:12px 15px;cursor:pointer}.fx-primary:disabled{opacity:.42;cursor:not-allowed}.fx-list{display:grid;gap:9px;margin-top:15px}.fx-row{padding:13px;border:1px solid #292929;border-radius:12px;display:flex;justify-content:space-between;gap:10px}.fx-product{padding:15px;border:1px solid #292929;border-radius:14px;display:grid;gap:8px}.fx-product span{color:#777;font-size:14px;line-height:1.45}.fx-orders{margin-top:22px}.fx-order{margin-top:8px;padding:12px;border:1px solid #292929;border-radius:12px;background:#0b0b0b;color:#aaa;font-size:13px}@keyframes fxspin{to{transform:rotate(360deg)}}@media(max-width:760px){.fx-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.fx-tab:last-child{grid-column:auto}.fx-card{padding:17px}.fx-header{padding-top:22px}.fx-header h1{font-size:43px}}
+        *{box-sizing:border-box}.fx-page{min-height:100vh;background:#050505;color:#fff;padding:18px 0 70px;font-family:inherit}.fx-wrap{width:min(940px,100%);margin:auto;padding:0 18px}.fx-top{display:flex;justify-content:space-between;align-items:center;gap:12px}.fx-back,.fx-wallet,.fx-notice button{border:0;background:transparent;color:#aaa}.fx-back{font-size:16px;padding:10px 0}.fx-wallet{background:#111;border:1px solid #292929;border-radius:999px;padding:10px 14px;color:#fff;font-weight:800}.fx-header{padding:28px 0 18px}.fx-eyebrow{font-size:11px;letter-spacing:.16em;font-weight:900;color:#777}.fx-header h1{font-size:clamp(40px,8vw,64px);line-height:1;letter-spacing:-.055em;margin:9px 0}.fx-header p,.fx-muted{color:#888;margin:0;line-height:1.55}.fx-notice{margin:12px 0;padding:13px 15px;border:1px solid #303030;border-radius:13px;background:#111;display:flex;justify-content:space-between;gap:12px;font-size:14px}.fx-notice button{font-size:22px;padding:0;cursor:pointer}.fx-tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin:12px 0 14px}.fx-tab{min-height:68px;border:1px solid #292929;border-radius:15px;background:#0d0d0d;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:12px;cursor:pointer}.fx-tab span{font-size:19px}.fx-tab.active{background:#fff;color:#050505;border-color:#fff}.fx-card{border:1px solid #292929;border-radius:20px;background:#0b0b0b;padding:20px}.fx-card h2{font-size:24px;margin:0 0 7px;letter-spacing:-.02em}.fx-card label{display:block;margin-top:18px;color:#aaa;font-size:14px;font-weight:700}.fx-card select,.fx-card input{display:block;width:100%;height:52px;margin-top:7px;padding:0 14px;border:1px solid #333;border-radius:13px;background:#151515;color:#fff;font-size:16px;outline:none}.fx-card select:focus,.fx-card input:focus{border-color:#777}.fx-loading{display:flex;align-items:center;gap:10px;margin-top:15px;padding:14px 15px;border:1px solid #292929;border-radius:13px;background:#101010;color:#aaa}.fx-spinner{width:17px;height:17px;border:2px solid #3b3b3b;border-top-color:#fff;border-radius:50%;display:inline-block;animation:fxspin .75s linear infinite;flex:0 0 auto}.fx-hint,.fx-empty{margin-top:14px;padding:13px 14px;border-radius:12px;background:#111;border:1px solid #292929;color:#777;font-size:14px;line-height:1.45}.fx-price{margin-top:16px;padding:17px;border-radius:14px;background:#151515;border:1px solid #292929;display:flex;flex-direction:column;gap:3px}.fx-price small{color:#999;font-weight:800;letter-spacing:.08em}.fx-price strong{font-size:29px;letter-spacing:-.03em}.fx-price span{color:#777;font-size:13px}.fx-price-large{margin-top:18px}.fx-primary{width:100%;min-height:52px;margin-top:17px;border:0;border-radius:13px;background:#fff;color:#050505;font-size:15px;font-weight:900;padding:12px 15px;cursor:pointer}.fx-primary:disabled{opacity:.42;cursor:not-allowed}.fx-list{display:grid;gap:9px;margin-top:15px}.fx-row{padding:13px;border:1px solid #292929;border-radius:12px;display:flex;justify-content:space-between;gap:10px}.fx-product{padding:15px;border:1px solid #292929;border-radius:14px;display:grid;gap:8px}.fx-product span{color:#777;font-size:14px;line-height:1.45}.fx-orders{margin-top:22px}.fx-code{margin-top:8px;padding:10px 12px;border-radius:10px;background:#13251b;color:#9df0b4;font-size:16px;overflow-wrap:anywhere}.fx-order{margin-top:8px;padding:12px;border:1px solid #292929;border-radius:12px;background:#0b0b0b;color:#aaa;font-size:13px}@keyframes fxspin{to{transform:rotate(360deg)}}@media(max-width:760px){.fx-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.fx-tab:last-child{grid-column:auto}.fx-card{padding:17px}.fx-header{padding-top:22px}.fx-header h1{font-size:43px}}
       `}</style>
     </main>
   );
