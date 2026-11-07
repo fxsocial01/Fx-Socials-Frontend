@@ -241,6 +241,9 @@ export default function NumberServicesPage() {
     if (!requireLogin() || !rentService || !rentCountry || !rentServer) return;
     beginAction('Contacting SocioSMS to reserve your rental…'); setBusy(true);
     try {
+      // Prepare/sync the selected SocioSMS product before the wallet-backed rental purchase.
+      const prepared = await req('/api/marketplace/live/sms/prepare', 'POST', { service: rentService, country: rentCountry, server: rentServer });
+      if (!prepared.productId) throw new Error('Could not prepare this rental option. Please refresh availability and try again.');
       const d = await req('/api/marketplace/live/sms/rentals', 'POST', { service: rentService, country: rentCountry, server: rentServer });
       setWallet(Number(d.walletBalance || 0)); setMessage(`Rental number ${d.rental?.phone || d.rental?.number || ''} purchased.`); await loadOrders();
     } catch (e: any) { setMessage(e.message); }
