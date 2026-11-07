@@ -9,7 +9,7 @@ const WHATSAPP='https://wa.me/2349072978807';
 const MANUAL_ACCOUNT={bankName:'OPay',accountName:'Yasir shehu',accountNumber:'9159373413'};
 const token=()=>localStorage.getItem('fxs-session')||'';
 const money=(n:any)=>`₦${Number(n||0).toLocaleString('en-NG')}`;
-async function req(path:string,method='GET',body?:any){const t=token();const r=await fetch(API+path,{method,headers:{'Content-Type':'application/json',...(t?{Authorization:`Bearer ${t}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`Request failed (${r.status})`);return d}
+async function req(path:string,method='GET',body?:any){const t=token();const r=await fetch(API+path,{method,headers:{'Content-Type':'application/json',...(t?{Authorization:`Bearer ${t}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(r.status===401&&t&&!path.startsWith('/api/auth/')){localStorage.removeItem('fxs-session');localStorage.removeItem('fxs-user');location.hash='#/account';throw new Error('Your session expired. Please sign in again to refresh your secure connection.')}if(!r.ok)throw new Error(d.error||`Request failed (${r.status})`);return d}
 const go=(p:string)=>{location.hash=`#/${p}`};
 const isAdmin=()=>{try{const u=JSON.parse(localStorage.getItem('fxs-user')||'null');return String(u?.role||'').toLowerCase()==='admin'&&String(u?.email||'').toLowerCase()===ADMIN}catch{return false}};
 const withAccount=(r:any)=>({...r,account:{...MANUAL_ACCOUNT,...(r?.account||{})}});
