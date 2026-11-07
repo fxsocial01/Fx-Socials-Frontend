@@ -11,7 +11,7 @@ async function req(path: string, method = 'GET', body?: any) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || 'Request failed');
+  if (!r.ok) { if (r.status === 401 && token()) { localStorage.removeItem('fxs-session'); localStorage.removeItem('fxs-user'); throw new Error('Your FX Socials session has expired. Please log in again, then retry your purchase.'); } throw new Error(d.error || 'Request failed'); }
   return d;
 }
 
@@ -97,17 +97,13 @@ export default function NumberServicesPage() {
   };
 
   const loadOrders = async () => {
-    if (!logged) return;
-    const results = await Promise.allSettled([
-      req('/api/fleexa/orders'),
-      req('/api/marketplace/orders'),
-    ]);
-    const fleexaOrders = results[0].status === 'fulfilled' ? (results[0].value.orders || []) : [];
-    const marketplaceOrders = results[1].status === 'fulfilled' ? (results[1].value.orders || []) : [];
-    setOrders([
-      ...fleexaOrders.map((o: any) => ({ ...o, source: 'Fleexa' })),
-      ...marketplaceOrders.map((o: any) => ({ ...o, source: 'SocioSMS' })),
-    ].sort((a: any, b: any) => new Date(b.created_at || b.createdAt || 0).getTime() - new Date(a.created_at || a.createdAt || 0).getTime()).slice(0, 25));
+    if (!token()) { setOrders([]); return; }
+    try {
+      const result = await req('/api/transactions');
+      setOrders((result.transactions || []).slice(0, 50));
+    } catch (error: any) {
+      setMessage(error.message || 'Could not load transaction history.');
+    }
   };
 
   const loadInitial = async () => {
@@ -248,7 +244,7 @@ export default function NumberServicesPage() {
 
   const buy = async () => {
     if (!requireLogin() || !service || !price?.salePrice) return;
-    beginAction('Request sent — reserving your US number…'); beginAction('Request sent — reserving your US number…'); setBusy(true);
+    beginAction('Request sent — reserving your US number…'); setBusy(true);
     try {
       const d = await req('/api/fleexa/sms/buy', 'POST', { service, maxPrice: price.providerPrice });
       setWallet(Number(d.walletBalance || 0));
@@ -260,7 +256,7 @@ export default function NumberServicesPage() {
 
   const buyEmail = async () => {
     if (!requireLogin() || !emailSite || !emailDomain) return;
-    beginAction('Creating your email order…'); beginAction('Creating your email order…'); setBusy(true);
+    beginAction('Creating your email order…'); setBusy(true);
     try {
       const d = await req('/api/fleexa/email/buy', 'POST', { site: emailSite, domain: emailDomain });
       setWallet(Number(d.walletBalance || 0)); setMessage(`Email ${d.order?.email || ''} purchased.`); await loadOrders();
@@ -284,14 +280,14 @@ export default function NumberServicesPage() {
   const buyProxy = async () => {
     if (!requireLogin() || !proxyPlan || !proxyCountry) return;
     beginAction('Creating your Fleexa proxy order…'); setBusy(true);
-    try { const d = await req('/api/fleexa/proxy/order', 'POST', { planId: proxyPlan, country: proxyCountry, proxyType: Number(proxyType) }); setWallet(Number(d.walletBalance || 0)); setMessage('Proxy order created. Your proxy details are available in your orders.'); }
+    try { const d = await req('/api/fleexa/proxy/order', 'POST', { planId: proxyPlan, country: proxyCountry, proxyType: Number(proxyType) }); setWallet(Number(d.walletBalance || 0)); setMessage('Proxy order created. Your proxy details are available in your orders.'); await loadOrders(); }
     catch (e: any) { setMessage(e.message); }
     finally { setBusy(false); endAction(); }
   };
 
   const buyOther = async () => {
     if (!requireLogin() || !otherService || !otherCountry || !otherServer) return;
-    beginAction('Preparing your number purchase…'); beginAction('Preparing your number purchase…'); setBusy(true);
+    beginAction('Preparing your number purchase…'); setBusy(true);
     try {
       const p = await req('/api/marketplace/live/sms/prepare', 'POST', { service: otherService, country: otherCountry, server: otherServer });
       const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.productId, customer: { service: otherService, country: otherCountry, server: otherServer } });
@@ -302,8 +298,8 @@ export default function NumberServicesPage() {
 
   const buyEsim = async (p: any) => {
     if (!requireLogin()) return;
-    beginAction('Processing your eSIM order…'); beginAction('Processing your eSIM order…'); setBusy(true);
-    try { const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.id, customer: { category: 'esim', country: p.country_code } }); setWallet(Number(d.walletBalance || 0)); setMessage('eSIM purchased successfully.'); }
+    beginAction('Processing your eSIM order…'); setBusy(true);
+    try { const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.id, customer: { category: 'esim', country: p.country_code } }); setWallet(Number(d.walletBalance || 0)); setMessage('eSIM purchased successfully.'); await loadOrders(); }
     catch (e: any) { setMessage(e.message); }
     finally { setBusy(false); endAction(); }
   };
