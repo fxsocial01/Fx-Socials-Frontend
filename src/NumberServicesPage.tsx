@@ -100,12 +100,14 @@ export default function NumberServicesPage() {
   const loadOrders = async () => {
     if (!token()) { setOrders([]); return; }
     setOrdersLoading(true);
-    const [historyResult, rentalsResult] = await Promise.allSettled([
+    const [historyResult, rentalsResult, fleexaResult] = await Promise.allSettled([
       req('/api/transactions'),
       req('/api/marketplace/orders'),
+      req('/api/fleexa/orders'),
     ]);
     const history = historyResult.status === 'fulfilled' ? (historyResult.value.transactions || []) : [];
     const rentals = rentalsResult.status === 'fulfilled' ? (rentalsResult.value.orders || []) : [];
+    const fleexaOrders = fleexaResult.status === 'fulfilled' ? (fleexaResult.value.orders || []) : [];
     const byId = new Map<string, any>();
     history.forEach((order: any) => byId.set(String(order.id), order));
     // Provider-synced rental data is authoritative for the number, live status and incoming OTP.
@@ -118,11 +120,21 @@ export default function NumberServicesPage() {
       provider_payload: order.provider_payload || {},
       amount: order.amount ?? Number(order.amount_kobo || 0) / 100,
     }));
+    // Fleexa's order endpoint now checks active SMS requests and returns any OTP received.
+    fleexaOrders.forEach((order: any) => byId.set(String(order.id), {
+      ...(byId.get(String(order.id)) || {}),
+      ...order,
+      source: 'Fleexa',
+      category: order.type || 'sms',
+      phone: order.phone || order.provider_payload?.number || order.provider_payload?.phone,
+      provider_payload: order.provider_payload || {},
+      amount: order.amount ?? Number(order.amount_kobo || 0) / 100,
+    }));
     const merged = [...byId.values()].sort((a, b) =>
       new Date(b.created_at || b.createdAt || 0).getTime() - new Date(a.created_at || a.createdAt || 0).getTime()
     );
     setOrders(merged.slice(0, 50));
-    if (historyResult.status === 'rejected' || rentalsResult.status === 'rejected') {
+    if (historyResult.status === 'rejected' || rentalsResult.status === 'rejected' || fleexaResult.status === 'rejected') {
       const failure = historyResult.status === 'rejected' ? historyResult.reason : rentalsResult.status === 'rejected' ? rentalsResult.reason : null;
       if (!merged.length) setMessage(failure?.message || 'Could not load transaction history.');
     }
