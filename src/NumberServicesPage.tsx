@@ -64,11 +64,13 @@ export default function NumberServicesPage() {
   const [proxies, setProxies] = useState<any[]>([]);
   const [proxyCountries, setProxyCountries] = useState<any[]>([]);
   const [proxyCountry, setProxyCountry] = useState('');
+  const [proxyCountrySearch, setProxyCountrySearch] = useState('');
   const [proxyPlan, setProxyPlan] = useState('');
   const [proxyType, setProxyType] = useState('2');
   const [cardAvailability, setCardAvailability] = useState<any>(null);
   const [otherServers, setOtherServers] = useState<any[]>([]);
   const [otherServer, setOtherServer] = useState('');
+  const [otherServerSearch, setOtherServerSearch] = useState('');
   const [esims, setEsims] = useState<any[]>([]);
   const [wallet, setWallet] = useState(0);
   const [orders, setOrders] = useState<any[]>([]);
@@ -365,9 +367,10 @@ export default function NumberServicesPage() {
             </label>)}
 
             {otherCountry && otherService && (serversLoading ? <Spinner label="Fetching servers and prices…" /> : otherServers.length > 0 ? <label>3. Choose server
+              <input type="search" value={otherServerSearch} onChange={e => setOtherServerSearch(e.target.value)} placeholder="Search servers…" />
               <select value={otherServer} onChange={e => setOtherServer(e.target.value)} disabled={serversLoading}>
                 <option value="">Choose server</option>
-                {otherServers.map(s => <option key={s.server} value={s.server}>{s.server_name || `Server ${s.server}`} · {Number(s.stock || 0)} in stock</option>)}
+                {otherServers.filter(s => String(s.server_name || s.server).toLowerCase().includes(otherServerSearch.toLowerCase())).map(s => <option key={s.server} value={s.server}>{s.server_name || `Server ${s.server}`} · {Number(s.stock || 0)} in stock</option>)}
               </select>
             </label> : <div className="fx-empty">No available server was returned for this country and service. Try another service.</div>)}
 
@@ -404,7 +407,7 @@ export default function NumberServicesPage() {
             <h2>🛡️ Residential Proxies</h2><p className="fx-muted">Fleexa residential proxy plans. Each IP is time-limited; credentials are returned after extraction.</p>
             {rentLoading ? <Spinner label="Fetching Fleexa proxy plans…" /> : <>
               <label>Choose plan<select value={proxyPlan} onChange={e => setProxyPlan(e.target.value)}><option value="">Choose proxy plan</option>{proxies.map(p => <option key={p.id} value={p.id}>{p.label} · {p.quantity} IP · {money(p.price_ngn)}</option>)}</select></label>
-              <label>Choose country<select value={proxyCountry} onChange={e => setProxyCountry(e.target.value)}><option value="">Choose country</option>{proxyCountries.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}</select></label>
+              <label>Choose country<input type="search" value={proxyCountrySearch} onChange={e => setProxyCountrySearch(e.target.value)} placeholder="Search proxy countries…" /><select value={proxyCountry} onChange={e => setProxyCountry(e.target.value)}><option value="">Choose country</option>{proxyCountries.filter(c => String(c.name || c.code).toLowerCase().includes(proxyCountrySearch.toLowerCase())).map(c => <option key={c.code} value={c.code}>{c.name}</option>)}</select></label>
               <label>Proxy type<select value={proxyType} onChange={e => setProxyType(e.target.value)}><option value="2">HTTP/HTTPS</option><option value="3">SOCKS5</option></select></label>
               <button disabled={busy || !proxyPlan || !proxyCountry} onClick={buyProxy} className="fx-primary">{busy ? 'Ordering proxy…' : 'Buy proxy'}</button>
             </>}
