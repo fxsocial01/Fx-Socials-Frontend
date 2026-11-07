@@ -9,7 +9,7 @@ const WHATSAPP='https://wa.me/2349072978807';
 const MANUAL_ACCOUNT={bankName:'OPay',accountName:'Yasir shehu',accountNumber:'9159373413'};
 const token=()=>localStorage.getItem('fxs-session')||'';
 const money=(n:any)=>`₦${Number(n||0).toLocaleString('en-NG')}`;
-async function req(path:string,method='GET',body?:any){const r=await fetch(API+path,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
+async function req(path:string,method='GET',body?:any){const t=token();const r=await fetch(API+path,{method,headers:{'Content-Type':'application/json',...(t?{Authorization:`Bearer ${t}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`Request failed (${r.status})`);return d}
 const go=(p:string)=>{location.hash=`#/${p}`};
 const isAdmin=()=>{try{const u=JSON.parse(localStorage.getItem('fxs-user')||'null');return String(u?.role||'').toLowerCase()==='admin'&&String(u?.email||'').toLowerCase()===ADMIN}catch{return false}};
 const withAccount=(r:any)=>({...r,account:{...MANUAL_ACCOUNT,...(r?.account||{})}});
@@ -19,7 +19,7 @@ export default function AppFixed(){
  const[page,setPage]=useState(()=>location.hash.replace('#/','').split('?')[0]||'home');
  const[wallet,setWallet]=useState(0),[orders,setOrders]=useState<any[]>([]),[msg,setMsg]=useState('');
  const logged=Boolean(token());
- const load=async()=>{if(!token())return;try{const w=await req('/api/me/wallet','POST',{sessionToken:token()});setWallet(Number(w.wallet?.balance||0))}catch{}try{const d=await req('/api/fleexa/orders');setOrders(d.orders||[])}catch{}};
+ const load=async()=>{if(!token())return;const results=await Promise.allSettled([req('/api/me/wallet','POST',{sessionToken:token()}),req('/api/fleexa/orders'),req('/api/marketplace/orders'),req('/api/transactions')]);const [w,f,m,t]=results;if(w.status==='fulfilled'){setWallet(Number(w.value.wallet?.balance??0));}else{console.error('[FX Socials] Wallet refresh failed:',w.reason);setMsg(w.reason?.message||'Wallet balance could not be loaded. Please sign in again.');}const byId=new Map<string,any>();if(f.status==='fulfilled')for(const o of f.value.orders||[])byId.set(String(o.id),o);if(m.status==='fulfilled')for(const o of m.value.orders||[])byId.set(String(o.id),{...(byId.get(String(o.id))||{}),...o,source:o.provider||'SocioSMS'});if(t.status==='fulfilled')for(const o of t.value.transactions||[])if(!byId.has(String(o.id)))byId.set(String(o.id),o);setOrders([...byId.values()].sort((a,b)=>new Date(b.created_at||0).getTime()-new Date(a.created_at||0).getTime()).slice(0,100));};
  useEffect(()=>{const h=()=>setPage(location.hash.replace('#/','').split('?')[0]||'home');addEventListener('hashchange',h);void load();return()=>removeEventListener('hashchange',h)},[]);
  useEffect(()=>{if(!logged)return;const i=setInterval(load,8000);return()=>clearInterval(i)},[logged]);
  const logout=()=>{localStorage.removeItem('fxs-session');localStorage.removeItem('fxs-user');setUser(null);setWallet(0);go('home')};
