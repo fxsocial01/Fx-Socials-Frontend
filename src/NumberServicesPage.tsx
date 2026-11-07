@@ -19,7 +19,7 @@ const Spinner = ({ label = 'Loading…' }: { label?: string }) => (
   <div className="fx-loading"><span className="fx-spinner" /> <span>{label}</span></div>
 );
 
-type Mode = 'us' | 'other' | 'email' | 'rent' | 'esim';
+type Mode = 'us' | 'other' | 'email' | 'rent' | 'esim' | 'proxy' | 'cards';
 
 const countries = [
   ['NG', '🇳🇬 Nigeria'], ['US', '🇺🇸 United States'], ['GB', '🇬🇧 United Kingdom'], ['CA', '🇨🇦 Canada'],
@@ -49,6 +49,22 @@ export default function NumberServicesPage() {
   const [otherServices, setOtherServices] = useState<any[]>([]);
   const [otherCountry, setOtherCountry] = useState('');
   const [otherService, setOtherService] = useState('');
+  const [serviceSearch, setServiceSearch] = useState('');
+  const [countrySearch, setCountrySearch] = useState('');
+  const [rentServices, setRentServices] = useState<any[]>([]);
+  const [rentCountries, setRentCountries] = useState<any[]>([]);
+  const [rentServiceSearch, setRentServiceSearch] = useState('');
+  const [rentCountrySearch, setRentCountrySearch] = useState('');
+  const [rentService, setRentService] = useState('');
+  const [rentCountry, setRentCountry] = useState('');
+  const [rentServers, setRentServers] = useState<any[]>([]);
+  const [rentServer, setRentServer] = useState('');
+  const [proxies, setProxies] = useState<any[]>([]);
+  const [proxyCountries, setProxyCountries] = useState<any[]>([]);
+  const [proxyCountry, setProxyCountry] = useState('');
+  const [proxyPlan, setProxyPlan] = useState('');
+  const [proxyType, setProxyType] = useState('2');
+  const [cardAvailability, setCardAvailability] = useState<any>(null);
   const [otherServers, setOtherServers] = useState<any[]>([]);
   const [otherServer, setOtherServer] = useState('');
   const [esims, setEsims] = useState<any[]>([]);
@@ -123,12 +139,43 @@ export default function NumberServicesPage() {
 
   const loadRentAreas = async () => {
     beginAction('Checking live rental availability and prices…'); setRentLoading(true);
-    try { const d = await req('/api/fleexa/rent/areas'); setAreas(d.areas || []); }
+    try {
+      const d = await req('/api/marketplace/live/sms/services');
+      setRentServices(d.services || []);
+      setAreas([]);
+    }
     catch (e: any) { setMessage(e.message); }
     finally { setRentLoading(false); endAction(); }
   };
 
-  useEffect(() => { if (mode === 'rent' && !areas.length) void loadRentAreas(); }, [mode]);
+  useEffect(() => { if (mode === 'rent' && !rentServices.length) void loadRentAreas(); }, [mode]);
+
+  const loadRentCountries = async (s: string) => {
+    if (!s) { setRentCountries([]); return; }
+    setRentLoading(true);
+    try { const d = await req(`/api/marketplace/live/sms/countries?service=${encodeURIComponent(s)}`); setRentCountries(d.countries || []); }
+    catch (e: any) { setMessage(e.message || 'Could not load rental countries.'); }
+    finally { setRentLoading(false); }
+  };
+
+  const loadRentServers = async (s: string, country: string) => {
+    if (!s || !country) { setRentServers([]); return; }
+    setRentLoading(true);
+    try { const d = await req(`/api/marketplace/live/sms/prices?service=${encodeURIComponent(s)}&country=${encodeURIComponent(country)}`); setRentServers((d.servers || []).filter((x: any) => Number(x.stock || 0) > 0)); }
+    catch (e: any) { setMessage(e.message || 'Could not load rental stock.'); }
+    finally { setRentLoading(false); }
+  };
+
+  useEffect(() => { if (mode === 'rent' && rentService) void loadRentCountries(rentService); }, [mode, rentService]);
+  useEffect(() => { if (mode === 'rent' && rentService && rentCountry) void loadRentServers(rentService, rentCountry); }, [mode, rentService, rentCountry]);
+
+  const loadProxyCatalog = async () => {
+    setRentLoading(true);
+    try { const d = await req('/api/fleexa/proxy/plans'); setProxies(d.plans || []); setProxyCountries(d.countries || []); }
+    catch (e: any) { setMessage(e.message || 'Could not load proxy plans.'); }
+    finally { setRentLoading(false); }
+  };
+  useEffect(() => { if (mode === 'proxy' && !proxies.length) void loadProxyCatalog(); }, [mode]);
 
   // Other Numbers intentionally follows: COUNTRY → SERVICE → SERVER → PRICE.
   const loadOtherServices = async () => {
@@ -191,12 +238,21 @@ export default function NumberServicesPage() {
   };
 
   const buyRent = async () => {
-    if (!requireLogin()) return;
-    beginAction('Contacting Fleexa to reserve your rental…'); beginAction('Contacting Fleexa to reserve your rental…'); setBusy(true);
+    if (!requireLogin() || !rentService || !rentCountry || !rentServer) return;
+    beginAction('Contacting SocioSMS to reserve your rental…'); setBusy(true);
     try {
-      const d = await req('/api/fleexa/rent/buy', 'POST', { appName: rentApp, time: months });
-      setWallet(Number(d.walletBalance || 0)); setMessage(`Rental ${d.order?.number || ''} purchased until ${d.order?.expire_at || 'the expiry date'}.`); await loadOrders();
+      const p = await req('/api/marketplace/live/sms/prepare', 'POST', { service: rentService, country: rentCountry, server: rentServer });
+      const d = await req('/api/marketplace/orders/purchase', 'POST', { productId: p.productId, customer: { service: rentService, country: rentCountry, server: rentServer, rental: true } });
+      setWallet(Number(d.walletBalance || 0)); setMessage(`Rental number ${d.rental?.phone || ''} purchased.`); await loadOrders();
     } catch (e: any) { setMessage(e.message); }
+    finally { setBusy(false); endAction(); }
+  };
+
+  const buyProxy = async () => {
+    if (!requireLogin() || !proxyPlan || !proxyCountry) return;
+    beginAction('Creating your Fleexa proxy order…'); setBusy(true);
+    try { const d = await req('/api/fleexa/proxy/order', 'POST', { planId: proxyPlan, country: proxyCountry, proxyType: Number(proxyType) }); setWallet(Number(d.walletBalance || 0)); setMessage('Proxy order created. Your proxy details are available in your orders.'); }
+    catch (e: any) { setMessage(e.message); }
     finally { setBusy(false); endAction(); }
   };
 
@@ -220,7 +276,7 @@ export default function NumberServicesPage() {
   };
 
   const tabs: [Mode, string, string][] = [
-    ['us', '🇺🇸', 'US Number'], ['other', '🌍', 'Other Numbers'], ['email', '✉️', 'Custom Email'], ['rent', '📞', 'Rental'], ['esim', '📶', 'eSIM'],
+    ['us', '🇺🇸', 'US Number'], ['other', '🌍', 'Other Numbers'], ['email', '✉️', 'Custom Email'], ['rent', '📞', 'Rental'], ['esim', '📶', 'eSIM'], ['proxy', '🛡️', 'Proxies'], ['cards', '💳', 'Virtual Cards'],
   ];
 
   return (
@@ -251,7 +307,7 @@ export default function NumberServicesPage() {
           {mode === 'us' && <>
             <h2>🇺🇸 US Number</h2>
             <p className="fx-muted">Choose an app, fetch the live price, then buy.</p>
-            {loading ? <Spinner label="Fetching US services…" /> : <label>Choose service<select value={service} onChange={e => setService(e.target.value)}><option value="">Choose service</option>{services.map(s => <option key={s.id || s.name} value={s.name || s.id}>{s.name || s.id}</option>)}</select></label>}
+            {loading ? <Spinner label="Fetching US services…" /> : <label>Choose service<input type="search" value={serviceSearch} onChange={e => setServiceSearch(e.target.value)} placeholder="Search services…" /><select value={service} onChange={e => setService(e.target.value)}><option value="">Choose service</option>{services.filter(s => String(s.name || s.id).toLowerCase().includes(serviceSearch.toLowerCase())).map(s => <option key={s.id || s.name} value={s.name || s.id}>{s.name || s.id}</option>)}</select></label>}
             {priceLoading && <Spinner label="Fetching live price…" />}
             {!priceLoading && price && <div className="fx-price"><small>FX SOCIALS PRICE</small><strong>{money(price.salePrice)}</strong><span>per number</span></div>}
             <button disabled={busy || priceLoading || !price} onClick={buy} className="fx-primary">{busy ? 'Getting number…' : priceLoading ? 'Fetching price…' : price ? `Buy US Number · ${money(price.salePrice)}` : 'Choose a service first'}</button>
@@ -262,9 +318,10 @@ export default function NumberServicesPage() {
             <p className="fx-muted">Follow the steps in order: country → service → server → price.</p>
 
             <label>1. Choose country
+              <input type="search" value={countrySearch} onChange={e => setCountrySearch(e.target.value)} placeholder="Search countries…" />
               <select value={otherCountry} disabled={otherServicesLoading} onChange={e => { const value=e.target.value; setSelectionLoading(Boolean(value)); setOtherServicesLoading(Boolean(value)); setOtherCountry(value); setOtherService(''); setOtherServer(''); setOtherServers([]); }}>
                 <option value="">Choose country</option>
-                {countries.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+                {countries.filter(([, name]) => name.toLowerCase().includes(countrySearch.toLowerCase())).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
               </select>
             </label>
 
@@ -272,9 +329,10 @@ export default function NumberServicesPage() {
 
             {selectionLoading && !otherServicesLoading && !serversLoading && <Spinner label="Preparing your selection…" />}
             {otherCountry && (otherServicesLoading ? <Spinner label="Fetching services…" /> : <label>2. Choose service
+              <input type="search" value={serviceSearch} onChange={e => setServiceSearch(e.target.value)} placeholder="Search services…" />
               <select value={otherService} onChange={e => { const value=e.target.value; setSelectionLoading(Boolean(value)); setServersLoading(Boolean(value)); setOtherService(value); }} disabled={otherServicesLoading || serversLoading}>
                 <option value="">Choose service</option>
-                {otherServices.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {otherServices.filter(s => String(s.name || s.id).toLowerCase().includes(serviceSearch.toLowerCase())).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </label>)}
 
@@ -301,24 +359,36 @@ export default function NumberServicesPage() {
           </>}
 
           {mode === 'rent' && <>
-            <h2>📞 Rental Number</h2><p className="fx-muted">Choose the app and rental period.</p>
-            <label>Service<select value={rentApp} onChange={e => setRentApp(e.target.value)}><option>WhatsApp</option><option>Telegram</option><option>Google</option><option>Instagram</option><option>All access</option></select></label>
-            <label>Rental period<select value={months} onChange={e => setMonths(e.target.value)}>{Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1} month{i ? 's' : ''}</option>)}</select></label>
-            {rentLoading ? <Spinner label="Fetching rental availability…" /> : areas.length > 0 ? <div className="fx-list">{areas.slice(0, 6).map((a: any) => <div className="fx-row" key={a.id || a.area_code || a.name}><span>{a.name || a.area_code || 'Available number'}</span><b>{money(Number(a.price_ngn || a.rate || a.price || 0) * 1.4)}</b></div>)}</div> : <div className="fx-empty">No rental availability returned yet.</div>}
-            <button disabled={busy || rentLoading} onClick={buyRent} className="fx-primary">{busy ? 'Getting rental…' : 'Buy rental number'}</button>
+            <h2>📞 Rental Number</h2><p className="fx-muted">Longer-lived SocioSMS numbers. Select service, country and server.</p>
+            <label>Choose service<input type="search" value={rentServiceSearch} onChange={e => setRentServiceSearch(e.target.value)} placeholder="Search rental services…" /><select value={rentService} onChange={e => { setRentService(e.target.value); setRentCountry(''); setRentServer(''); }}>{rentServices.filter(s => String(s.name || s.id).toLowerCase().includes(rentServiceSearch.toLowerCase())).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+            {rentService && <label>Choose country<input type="search" value={rentCountrySearch} onChange={e => setRentCountrySearch(e.target.value)} placeholder="Search countries…" /><select value={rentCountry} onChange={e => { setRentCountry(e.target.value); setRentServer(''); }}><option value="">Choose country</option>{rentCountries.filter(c => String(c.country_name || c.country_code).toLowerCase().includes(rentCountrySearch.toLowerCase())).map(c => <option key={c.country_code} value={c.country_code}>{c.flag || ''} {c.country_name} · {Number(c.stock || 0)} in stock</option>)}</select></label>}
+            {rentService && rentCountry && <label>Choose server<select value={rentServer} onChange={e => setRentServer(e.target.value)}><option value="">Choose server</option>{rentServers.map(s => <option key={s.server} value={s.server}>{s.server_name || `Server ${s.server}`} · {Number(s.stock || 0)} in stock · {money(s.salePrice)}</option>)}</select></label>}
+            <label>Rental period<select value={months} onChange={e => setMonths(e.target.value)}><option value="1">One service session</option></select></label>
+            <button disabled={busy || rentLoading || !rentServer} onClick={buyRent} className="fx-primary">{busy ? 'Getting rental…' : 'Buy rental number'}</button>
           </>}
 
           {mode === 'esim' && <>
             <h2>📶 eSIM</h2><p className="fx-muted">Available eSIM plans.</p>
             {loading ? <Spinner label="Fetching eSIM plans…" /> : <div className="fx-list">{esims.length ? esims.map(p => <div className="fx-product" key={p.id}><b>{p.name}</b><span>{p.description || ''}</span><button onClick={() => buyEsim(p)} className="fx-primary">Buy eSIM · {money(p.price)}</button></div>) : <div className="fx-empty">No eSIM plans are configured yet.</div>}</div>}
           </>}
+
+          {mode === 'proxy' && <>
+            <h2>🛡️ Residential Proxies</h2><p className="fx-muted">Fleexa residential proxy plans. Each IP is time-limited; credentials are returned after extraction.</p>
+            {rentLoading ? <Spinner label="Fetching Fleexa proxy plans…" /> : <>
+              <label>Choose plan<select value={proxyPlan} onChange={e => setProxyPlan(e.target.value)}><option value="">Choose proxy plan</option>{proxies.map(p => <option key={p.id} value={p.id}>{p.label} · {p.quantity} IP · {money(p.price_ngn)}</option>)}</select></label>
+              <label>Choose country<select value={proxyCountry} onChange={e => setProxyCountry(e.target.value)}><option value="">Choose country</option>{proxyCountries.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}</select></label>
+              <label>Proxy type<select value={proxyType} onChange={e => setProxyType(e.target.value)}><option value="2">HTTP/HTTPS</option><option value="3">SOCKS5</option></select></label>
+              <button disabled={busy || !proxyPlan || !proxyCountry} onClick={buyProxy} className="fx-primary">{busy ? 'Ordering proxy…' : 'Buy proxy'}</button>
+            </>}
+          </>}
+          {mode === 'cards' && <><h2>💳 Virtual Cards</h2><p className="fx-muted">Virtual card issuance requires a verified Fleexa card-API integration. This option will become available once Fleexa provides reseller endpoints and customer KYC/consent flows.</p><div className="fx-empty">Card API integration is not enabled. No payment will be taken.</div></>}
         </section>
 
         {orders.length > 0 && <section className="fx-orders"><h2>Recent orders</h2>{orders.map(o => <div className="fx-order" key={o.id}>{o.type} · {o.phone || o.email || o.number || 'Processing'} · {money(o.amount)} · {o.status}</div>)}</section>}
       </div>
 
       <style>{`
-        *{box-sizing:border-box}.fx-page{min-height:100vh;background:#050505;color:#fff;padding:18px 0 70px;font-family:inherit}.fx-wrap{width:min(940px,100%);margin:auto;padding:0 18px}.fx-top{display:flex;justify-content:space-between;align-items:center;gap:12px}.fx-back,.fx-wallet,.fx-notice button{border:0;background:transparent;color:#aaa}.fx-back{font-size:16px;padding:10px 0}.fx-wallet{background:#111;border:1px solid #292929;border-radius:999px;padding:10px 14px;color:#fff;font-weight:800}.fx-header{padding:28px 0 18px}.fx-eyebrow{font-size:11px;letter-spacing:.16em;font-weight:900;color:#777}.fx-header h1{font-size:clamp(40px,8vw,64px);line-height:1;letter-spacing:-.055em;margin:9px 0}.fx-header p,.fx-muted{color:#888;margin:0;line-height:1.55}.fx-notice{margin:12px 0;padding:13px 15px;border:1px solid #303030;border-radius:13px;background:#111;display:flex;justify-content:space-between;gap:12px;font-size:14px}.fx-notice button{font-size:22px;padding:0;cursor:pointer}.fx-tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0 14px}.fx-tab{min-height:68px;border:1px solid #292929;border-radius:15px;background:#0d0d0d;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:12px;cursor:pointer}.fx-tab span{font-size:19px}.fx-tab.active{background:#fff;color:#050505;border-color:#fff}.fx-card{border:1px solid #292929;border-radius:20px;background:#0b0b0b;padding:20px}.fx-card h2{font-size:24px;margin:0 0 7px;letter-spacing:-.02em}.fx-card label{display:block;margin-top:18px;color:#aaa;font-size:14px;font-weight:700}.fx-card select{display:block;width:100%;height:52px;margin-top:7px;padding:0 14px;border:1px solid #333;border-radius:13px;background:#151515;color:#fff;font-size:16px;outline:none}.fx-card select:focus{border-color:#777}.fx-loading{display:flex;align-items:center;gap:10px;margin-top:15px;padding:14px 15px;border:1px solid #292929;border-radius:13px;background:#101010;color:#aaa}.fx-spinner{width:17px;height:17px;border:2px solid #3b3b3b;border-top-color:#fff;border-radius:50%;display:inline-block;animation:fxspin .75s linear infinite;flex:0 0 auto}.fx-hint,.fx-empty{margin-top:14px;padding:13px 14px;border-radius:12px;background:#111;border:1px solid #292929;color:#777;font-size:14px;line-height:1.45}.fx-price{margin-top:16px;padding:17px;border-radius:14px;background:#151515;border:1px solid #292929;display:flex;flex-direction:column;gap:3px}.fx-price small{color:#999;font-weight:800;letter-spacing:.08em}.fx-price strong{font-size:29px;letter-spacing:-.03em}.fx-price span{color:#777;font-size:13px}.fx-price-large{margin-top:18px}.fx-primary{width:100%;min-height:52px;margin-top:17px;border:0;border-radius:13px;background:#fff;color:#050505;font-size:15px;font-weight:900;padding:12px 15px;cursor:pointer}.fx-primary:disabled{opacity:.42;cursor:not-allowed}.fx-list{display:grid;gap:9px;margin-top:15px}.fx-row{padding:13px;border:1px solid #292929;border-radius:12px;display:flex;justify-content:space-between;gap:10px}.fx-product{padding:15px;border:1px solid #292929;border-radius:14px;display:grid;gap:8px}.fx-product span{color:#777;font-size:14px;line-height:1.45}.fx-orders{margin-top:22px}.fx-order{margin-top:8px;padding:12px;border:1px solid #292929;border-radius:12px;background:#0b0b0b;color:#aaa;font-size:13px}@keyframes fxspin{to{transform:rotate(360deg)}}@media(max-width:760px){.fx-tabs{grid-template-columns:repeat(2,1fr)}.fx-tab:last-child{grid-column:span 2}.fx-card{padding:17px}.fx-header{padding-top:22px}.fx-header h1{font-size:43px}}
+        *{box-sizing:border-box}.fx-page{min-height:100vh;background:#050505;color:#fff;padding:18px 0 70px;font-family:inherit}.fx-wrap{width:min(940px,100%);margin:auto;padding:0 18px}.fx-top{display:flex;justify-content:space-between;align-items:center;gap:12px}.fx-back,.fx-wallet,.fx-notice button{border:0;background:transparent;color:#aaa}.fx-back{font-size:16px;padding:10px 0}.fx-wallet{background:#111;border:1px solid #292929;border-radius:999px;padding:10px 14px;color:#fff;font-weight:800}.fx-header{padding:28px 0 18px}.fx-eyebrow{font-size:11px;letter-spacing:.16em;font-weight:900;color:#777}.fx-header h1{font-size:clamp(40px,8vw,64px);line-height:1;letter-spacing:-.055em;margin:9px 0}.fx-header p,.fx-muted{color:#888;margin:0;line-height:1.55}.fx-notice{margin:12px 0;padding:13px 15px;border:1px solid #303030;border-radius:13px;background:#111;display:flex;justify-content:space-between;gap:12px;font-size:14px}.fx-notice button{font-size:22px;padding:0;cursor:pointer}.fx-tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0 14px}.fx-tab{min-height:68px;border:1px solid #292929;border-radius:15px;background:#0d0d0d;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:12px;cursor:pointer}.fx-tab span{font-size:19px}.fx-tab.active{background:#fff;color:#050505;border-color:#fff}.fx-card{border:1px solid #292929;border-radius:20px;background:#0b0b0b;padding:20px}.fx-card h2{font-size:24px;margin:0 0 7px;letter-spacing:-.02em}.fx-card label{display:block;margin-top:18px;color:#aaa;font-size:14px;font-weight:700}.fx-card select,.fx-card input{display:block;width:100%;height:52px;margin-top:7px;padding:0 14px;border:1px solid #333;border-radius:13px;background:#151515;color:#fff;font-size:16px;outline:none}.fx-card select:focus,.fx-card input:focus{border-color:#777}.fx-loading{display:flex;align-items:center;gap:10px;margin-top:15px;padding:14px 15px;border:1px solid #292929;border-radius:13px;background:#101010;color:#aaa}.fx-spinner{width:17px;height:17px;border:2px solid #3b3b3b;border-top-color:#fff;border-radius:50%;display:inline-block;animation:fxspin .75s linear infinite;flex:0 0 auto}.fx-hint,.fx-empty{margin-top:14px;padding:13px 14px;border-radius:12px;background:#111;border:1px solid #292929;color:#777;font-size:14px;line-height:1.45}.fx-price{margin-top:16px;padding:17px;border-radius:14px;background:#151515;border:1px solid #292929;display:flex;flex-direction:column;gap:3px}.fx-price small{color:#999;font-weight:800;letter-spacing:.08em}.fx-price strong{font-size:29px;letter-spacing:-.03em}.fx-price span{color:#777;font-size:13px}.fx-price-large{margin-top:18px}.fx-primary{width:100%;min-height:52px;margin-top:17px;border:0;border-radius:13px;background:#fff;color:#050505;font-size:15px;font-weight:900;padding:12px 15px;cursor:pointer}.fx-primary:disabled{opacity:.42;cursor:not-allowed}.fx-list{display:grid;gap:9px;margin-top:15px}.fx-row{padding:13px;border:1px solid #292929;border-radius:12px;display:flex;justify-content:space-between;gap:10px}.fx-product{padding:15px;border:1px solid #292929;border-radius:14px;display:grid;gap:8px}.fx-product span{color:#777;font-size:14px;line-height:1.45}.fx-orders{margin-top:22px}.fx-order{margin-top:8px;padding:12px;border:1px solid #292929;border-radius:12px;background:#0b0b0b;color:#aaa;font-size:13px}@keyframes fxspin{to{transform:rotate(360deg)}}@media(max-width:760px){.fx-tabs{grid-template-columns:repeat(2,1fr)}.fx-tab:last-child{grid-column:auto}.fx-card{padding:17px}.fx-header{padding-top:22px}.fx-header h1{font-size:43px}}
       `}</style>
     </main>
   );
