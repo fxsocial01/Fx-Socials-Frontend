@@ -459,9 +459,9 @@ export default function NumberServicesPage() {
             <div>{money(o.amount ?? Number(o.amount_kobo || o.amountKobo || 0) / 100)} · {o.status}</div>
             {code && <div className="fx-code">Verification code: <strong>{String(code)}</strong></div>}
             {!code && smsMessage && <div className="fx-code">{String(smsMessage)}</div>}
-            {o.category === 'sms' && ['active','waiting'].includes(String(o.status || '').toLowerCase()) && <small>Waiting for SMS · checking automatically every 5 seconds</small>}
+            {o.category === 'sms' && ['active','waiting','received','fulfilling','paid','pending'].includes(String(o.status || '').toLowerCase()) && <small>Waiting for SMS · checking automatically every 5 seconds</small>}
           </div>;
-        })}</section>}
+        })}</section>
       </div>
 
       <style>{`
