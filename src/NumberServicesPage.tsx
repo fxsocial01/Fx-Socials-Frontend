@@ -111,16 +111,20 @@ export default function NumberServicesPage() {
   const loadInitial = async () => {
     beginAction('Connecting to digital services…'); setLoading(true);
     try {
-      const [f, o, e, email] = await Promise.all([
+      const results = await Promise.allSettled([
         req('/api/fleexa/sms/services'),
         req('/api/marketplace/live/sms/services'),
         req('/api/marketplace/live/esim/catalog'),
         req('/api/fleexa/email/products'),
       ]);
-      setServices(f.services || []);
-      setOtherServices(o.services || []);
-      setEsims(e.products || []);
-      setEmailProducts(email.products || email.services || []);
+      const [f, o, e, email] = results.map(x => x.status === 'fulfilled' ? x.value : null);
+      if (f) setServices(f.services || []);
+      if (o) setOtherServices(o.services || []);
+      if (e) setEsims(e.products || []);
+      if (email) setEmailProducts(email.products || email.services || []);
+      const failed = results.find(x => x.status === 'rejected') as PromiseRejectedResult | undefined;
+      if (failed && !f && !o && !e && !email) throw failed.reason;
+      if (!f || !o) setMessage('Some provider catalogs could not load. Check provider API configuration and try again.');
     } catch (err: any) {
       setMessage(err.message || 'Could not load digital services.');
     } finally { setLoading(false); endAction(); }
