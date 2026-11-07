@@ -4,8 +4,14 @@ const API = (import.meta as any).env.VITE_API_BASE_URL || 'https://fx-socials-ap
 const token = () => localStorage.getItem('fxs-session') || '';
 const money = (n: any) => `₦${Number(n || 0).toLocaleString('en-NG')}`;
 async function req(path: string, method = 'GET', body?: any) {
-  const r = await fetch(`${API}${path}`, { method, headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const currentToken = token();
+  const r = await fetch(`${API}${path}`, { method, headers: { 'Content-Type': 'application/json', ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
+  if (r.status === 401 && currentToken && !path.startsWith('/api/auth/')) {
+    localStorage.removeItem('fxs-session'); localStorage.removeItem('fxs-user');
+    location.hash = '#/account';
+    throw new Error('Your session expired. Please sign in again to refresh your secure connection.');
+  }
   if (!r.ok) throw new Error(d.error || 'Request failed');
   return d;
 }
