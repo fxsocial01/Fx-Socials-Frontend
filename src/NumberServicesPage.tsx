@@ -463,8 +463,8 @@ export default function NumberServicesPage() {
         <section className="fx-orders"><div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}><h2>My orders</h2><button type="button" onClick={() => void loadOrders()} disabled={ordersLoading} className="fx-refresh">{ordersLoading ? 'Refreshing…' : 'Refresh orders'}</button></div>{orders.length === 0 ? <div className="fx-empty">{ordersLoading ? 'Loading your purchases…' : 'No orders are showing yet. Pull to refresh or tap Refresh orders.'}</div> : orders.map(o => {
           const payload = o.provider_payload || {};
           const phone = payload.phone || payload.number || o.phone || o.number;
-          const code = payload.code || payload.otp || payload.sms_code || payload.verification_code || payload.activation_code;
-          const smsMessage = payload.message || payload.sms || payload.text;
+          const code = payload.code || payload.otp || payload.sms_code || payload.pin || payload.verification_code || payload.activation_code;
+          const smsMessage = payload.message || payload.sms_text || payload.sms || payload.text;
           return <div className="fx-order" key={o.id}>
             <strong>{o.source || o.category || o.type || 'Digital service'}</strong>
             <div>{phone || o.email || payload.service || o.service || 'Processing'}</div>
