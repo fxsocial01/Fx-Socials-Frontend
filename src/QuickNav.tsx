@@ -7,11 +7,10 @@ export default function QuickNav(){
   isAdmin=String(saved?.role||'').toLowerCase()==='admin' && String(saved?.email||'').toLowerCase()==='yasiyrshehu@gmail.com';
  }catch{}
  const items=[
-  ['marketplace','Buy accounts'],
+  ['subscriptions','Digital subscriptions'],
   ['services','Buy number'],
   ['services?tab=esim','Buy eSIM'],
   ['boosting','Boost social media'],
-  ['sell','Sell account'],
   ['support','Customer support'],
   ['how','How it works'],
   ['dashboard','My account'],
