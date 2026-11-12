@@ -4,7 +4,6 @@ import AppFixed from './AppFixed';
 import './index.css';
 import './services-auth-fix';
 import './wallet-fix';
-import './admin-tools';
 import './admin-refund-controls';
 import './payment-fix';
 import './admin-access';
