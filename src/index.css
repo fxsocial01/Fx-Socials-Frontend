@@ -38,6 +38,12 @@ button:hover:not(:disabled){filter:saturate(1.08)}
 .fx-services-page,.services-page{background:transparent!important;color:var(--fx-ink)!important}
 [style*="#050505"],[style*="#0b0b0b"],[style*="#0B0B0B"],[style*="#0c0c0c"],[style*="#0C0C0C"],[style*="#0d0d0d"],[style*="#0D0D0D"],[style*="#101010"],[style*="#111"],[style*="#121212"],[style*="#151515"],[style*="#161616"]{background-color:#fff!important;color:var(--fx-ink)!important;border-color:var(--fx-line)!important}
 [style*="#222"],[style*="#242424"],[style*="#252525"],[style*="#262626"],[style*="#282828"],[style*="#292929"],[style*="#2b2b2b"],[style*="#333"],[style*="#343434"]{border-color:var(--fx-line)!important}
-[style*="color: rgb(255, 255, 255)"],[style*="color: white"],[style*="color:#fff"],[style*="color: #fff"]{color:var(--fx-ink)!important}
 @media(max-width:700px){.hero{padding:34px 16px!important}.hero h1{font-size:clamp(38px,10vw,54px)!important}.quick-nav{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
 @media(prefers-reduced-motion:reduce){button{transition:none!important}}
+
+/* High-contrast service screens and unmistakable action buttons */
+main[style*="#050505"]{background:transparent!important;color:var(--fx-ink)!important}
+main[style*="#050505"] *{color:var(--fx-ink)!important}
+main[style*="#050505"] button{background:var(--fx-primary)!important;color:#fff!important;border:1px solid var(--fx-primary)!important;box-shadow:0 7px 18px #245fe526}
+main[style*="#050505"] button:hover{background:var(--fx-primary-dark)!important}
+main[style*="#050505"] input,main[style*="#050505"] select{background:#fff!important;color:var(--fx-ink)!important;border:1px solid var(--fx-line)!important}
