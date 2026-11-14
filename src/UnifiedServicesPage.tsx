@@ -26,6 +26,30 @@ const readCache = (key: string, fallback: any[] = []) => { try { const raw = loc
 const writeCache = (key: string, value: any[]) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
 const countryCacheKey = (service: string) => `${OTHER_COUNTRIES_CACHE}:${String(service || '').toLowerCase()}`;
 
+
+function SearchableSelect({label,value,placeholder,searchPlaceholder,options,onChange,disabled=false}:{
+ label:string;value:string;placeholder:string;searchPlaceholder:string;
+ options:{value:string;label:string}[];onChange:(value:string)=>void;disabled?:boolean;
+}){
+ const [open,setOpen]=useState(false),[query,setQuery]=useState('');
+ const root=useRef<HTMLDivElement|null>(null);
+ useEffect(()=>{if(!open)return;const close=(event:MouseEvent)=>{if(root.current&&!root.current.contains(event.target as Node))setOpen(false);};document.addEventListener('mousedown',close);return()=>document.removeEventListener('mousedown',close);},[open]);
+ const selected=options.find(x=>x.value===value);
+ const filtered=options.filter(x=>x.label.toLowerCase().includes(query.trim().toLowerCase()));
+ return <div ref={root} style={{...styles.label,position:'relative',zIndex:open?20:1}}>
+  <span>{label}</span>
+  <button type="button" disabled={disabled} aria-expanded={open} onClick={()=>{setOpen(v=>!v);setQuery('');}} style={{...styles.select,display:'flex',alignItems:'center',justifyContent:'space-between',textAlign:'left',cursor:disabled?'not-allowed':'pointer',background:'#fff'}}>
+   <span style={{color:selected?'#252B38':'#7A8190',fontWeight:selected?700:400}}>{selected?.label||placeholder}</span><span style={{fontSize:20,lineHeight:1}}>⌄</span>
+  </button>
+  {open&&<div style={{position:'absolute',top:'100%',left:0,right:0,marginTop:6,padding:9,background:'#fff',border:'1px solid #DCE3EF',borderRadius:14,boxShadow:'0 14px 34px #18243A24',zIndex:50,maxHeight:'min(380px,60vh)',display:'flex',flexDirection:'column'}}>
+   <input autoFocus type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder={searchPlaceholder} style={{width:'100%',boxSizing:'border-box',height:44,padding:'0 12px',border:'1px solid #DCE3EF',borderRadius:10,background:'#F7F9FC',color:'#252B38',fontSize:15,outline:'none',marginBottom:7}}/>
+   <div style={{overflowY:'auto',minHeight:0}}>
+    {filtered.length?filtered.map(option=><button type="button" key={option.value} onClick={()=>{onChange(option.value);setOpen(false);setQuery('');}} style={{width:'100%',minHeight:43,padding:'9px 11px',border:0,borderRadius:9,background:option.value===value?'#EEF3FF':'#fff',color:option.value===value?'#245FE5':'#25334A',fontSize:14,fontWeight:option.value===value?800:600,display:'flex',alignItems:'center',justifyContent:'space-between',textAlign:'left',cursor:'pointer'}}><span>{option.label}</span>{option.value===value&&<span>✓</span>}</button>):<div style={{padding:14,color:'#7A8190',fontSize:13}}>No matching results</div>}
+   </div>
+  </div>}
+ </div>;
+}
+
 export default function UnifiedServicesPage() {
  const [wallet,setWallet]=useState(0),[tab,setTab]=useState('us'),[usServices,setUsServices]=useState<any[]>([]),[otherServices,setOtherServices]=useState<any[]>([]);
  const [service,setService]=useState(''),[otherService,setOtherService]=useState(''),[country,setCountry]=useState(''),[countries,setCountries]=useState<any[]>([]);
@@ -56,13 +80,13 @@ export default function UnifiedServicesPage() {
     <button onClick={()=>{setTab('other');setMessage('');}} style={{...styles.tab,...(tab==='other'?styles.active:{})}}>◎ <span>All<br/>Countries</span></button>
    </div>
    {tab==='us'?<>
-    <label style={styles.label}>Select Service<select disabled={loading||busy} value={service} onChange={e=>setService(e.target.value)} style={styles.select}><option value="">Choose a service</option>{usServices.map((x:any)=>{const n=String(x.name||x.id);return <option key={x.id||n} value={n}>{n}{usPrices[n]?' — from '+money(usPrices[n]):''}</option>;})}</select></label>
+    <SearchableSelect label="Select Service" value={service} placeholder="Choose a service" searchPlaceholder="Search services…" options={usServices.map((x:any)=>{const n=String(x.name||x.id);return {value:n,label:n+(usPrices[n]?' — from '+money(usPrices[n]):'')};})} onChange={setService} disabled={loading||busy}/>
     {service&&<div style={styles.priceLine}><span>{service}</span><strong>{price?'from '+money(price):'Checking starting price…'}</strong></div>}
     <button disabled={busy||loading||!service||!price} onClick={()=>void buyUS()} style={styles.primary}>{busy?'Processing…':'Buy Number'+(price?' · '+money(price):'')}</button>
    </>:<>
-    <label style={styles.label}>Select Service<select disabled={loading||busy} value={otherService} onChange={e=>setOtherService(e.target.value)} style={styles.select}><option value="">Choose a service</option>{otherServices.map((x:any)=>{const id=String(x.id||x.code||x.name||'').toLowerCase();const nm=String(x.name||x.code||x.id);return <option key={id} value={id}>{nm}{id===otherService&&startingPrice?' — from '+money(startingPrice):''}</option>;})}</select></label>
+    <SearchableSelect label="Select Service" value={otherService} placeholder="Choose a service" searchPlaceholder="Search services…" options={otherServices.map((x:any)=>{const id=String(x.id||x.code||x.name||'').toLowerCase();const nm=String(x.name||x.code||x.id);return {value:id,label:nm+(id===otherService&&startingPrice?' — from '+money(startingPrice):'')};})} onChange={setOtherService} disabled={loading||busy}/>
     {otherService&&<div style={styles.priceLine}><span>{chosenService?.name||chosenService?.code||otherService}</span><strong>{startingPrice?'from '+money(startingPrice):'Checking starting price…'}</strong></div>}
-    {otherService&&<label style={styles.label}>Select Country<select disabled={busy} value={country} onChange={e=>setCountry(e.target.value)} style={styles.select}><option value="">Choose a country</option>{countries.map((x:any)=><option key={x.country_code||x.code||x.name} value={String(x.country_code||x.code||x.name).toUpperCase()}>{x.flag?x.flag+' ':''}{x.country_name||x.name||x.country_code||x.code}</option>)}</select></label>}
+    {otherService&&<SearchableSelect label="Select Country" value={country} placeholder="Choose a country" searchPlaceholder="Search countries…" options={countries.map((x:any)=>{const code=String(x.country_code||x.code||x.name).toUpperCase();return {value:code,label:(x.flag?x.flag+' ':'')+String(x.country_name||x.name||x.country_code||x.code)};})} onChange={setCountry} disabled={busy}/>}
     {country&&<section style={styles.servers}><div style={styles.serverHeading}><h3>Available Servers — {chosenService?.name||chosenService?.code||otherService}</h3><small>Prices differ per server</small></div>{servers.length?servers.map((x:any)=><button key={x.server} onClick={()=>{setServer(String(x.server));setPrice(Number(x.salePrice||0));}} style={{...styles.serverCard,...(String(server).toUpperCase()===String(x.server).toUpperCase()?styles.serverSelected:{})}}><div style={styles.serverName}>▤ <b>Server {String(x.server_name||x.server).replace(/^server\s*/i,'')}</b></div><strong style={styles.serverPrice}>{money(x.salePrice)}</strong><div style={styles.serverMeta}><span style={{color:'#27845D'}}>{Number(x.stock||0)} in stock</span><span>◷ {x.estimated_time||x.delivery_time||'~5 min'}</span></div></button>):<div style={styles.empty}>No servers are available for this country and service right now.</div>}</section>}
     <button disabled={busy||!server||!price} onClick={()=>void buyOther()} style={styles.primary}>{busy?'Processing…':'Buy Number'+(price?' · '+money(price):'')}</button>
    </>}
