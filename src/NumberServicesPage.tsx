@@ -21,6 +21,40 @@ const Spinner = ({ label = 'Loading…' }: { label?: string }) => (
 
 type Mode = 'us' | 'other' | 'email' | 'rent' | 'esim' | 'proxy' | 'cards';
 
+type SearchChoice = { value: string; label: string; };
+function SearchableChoice({ label, value, placeholder, searchPlaceholder, options, onChange, disabled = false }: {
+  label: string; value: string; placeholder: string; searchPlaceholder: string;
+  options: SearchChoice[]; onChange: (value: string) => void; disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const root = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => { if (root.current && !root.current.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+  const filtered = options.filter(option => option.label.toLowerCase().includes(query.trim().toLowerCase()));
+  const selected = options.find(option => option.value === value);
+  return <div className="fx-search-choice" ref={root}>
+    <span className="fx-choice-label">{label}</span>
+    <button type="button" className="fx-choice-trigger" disabled={disabled} aria-expanded={open} onClick={() => { setOpen(current => !current); setQuery(''); }}>
+      <span className={selected ? 'is-selected' : 'is-placeholder'}>{selected?.label || placeholder}</span>
+      <span className="fx-choice-chevron">⌄</span>
+    </button>
+    {open && <div className="fx-choice-menu">
+      <input autoFocus type="search" className="fx-choice-search" value={query} onChange={event => setQuery(event.target.value)} placeholder={searchPlaceholder} />
+      <div className="fx-choice-options">
+        {filtered.length ? filtered.map(option => <button type="button" key={option.value} className={option.value === value ? 'fx-choice-option active' : 'fx-choice-option'} onClick={() => { onChange(option.value); setOpen(false); setQuery(''); }}>
+          <span>{option.label}</span>{option.value === value && <span aria-hidden="true">✓</span>}
+        </button>) : <div className="fx-choice-empty">No matching results</div>}
+      </div>
+    </div>}
+  </div>;
+}
+
+
 const countries = [
   ['NG', '🇳🇬 Nigeria'], ['US', '🇺🇸 United States'], ['GB', '🇬🇧 United Kingdom'], ['CA', '🇨🇦 Canada'],
   ['AU', '🇦🇺 Australia'], ['DE', '🇩🇪 Germany'], ['FR', '🇫🇷 France'], ['ES', '🇪🇸 Spain'],
@@ -385,7 +419,7 @@ export default function NumberServicesPage() {
           {mode === 'us' && <>
             <h2>🇺🇸 US Number</h2>
             <p className="fx-muted">Choose an app, fetch the live price, then buy.</p>
-            {loading ? <Spinner label="Fetching US services…" /> : <label>Choose service<input type="search" value={serviceSearch} onChange={e => setServiceSearch(e.target.value)} placeholder="Search services…" /><select value={service} onChange={e => setService(e.target.value)}><option value="">Choose service</option>{services.filter(s => String(s.name || s.id).toLowerCase().includes(serviceSearch.toLowerCase())).map(s => <option key={s.id || s.name} value={s.name || s.id}>{s.name || s.id}</option>)}</select></label>}
+            {loading ? <Spinner label="Fetching US services…" /> : <SearchableChoice label="Choose service" value={service} placeholder="Choose service" searchPlaceholder="Search services…" options={services.map(s => ({ value: String(s.name || s.id), label: String(s.name || s.id) }))} onChange={setService} />}
             {priceLoading && <Spinner label="Fetching live price…" />}
             {!priceLoading && price && <div className="fx-price"><small>FX SOCIALS PRICE</small><strong>{money(price.salePrice)}</strong><span>per number</span></div>}
             <button disabled={busy || priceLoading || !price} onClick={buy} className="fx-primary">{busy ? 'Getting number…' : priceLoading ? 'Fetching price…' : price ? `Buy US Number · ${money(price.salePrice)}` : 'Choose a service first'}</button>
@@ -395,21 +429,9 @@ export default function NumberServicesPage() {
             <h2>🌍 Other Numbers</h2>
             <p className="fx-muted">Choose a live SocioSMS service, then its supported country and server.</p>
 
-            {otherServicesLoading && !otherServices.length ? <Spinner label="Fetching SocioSMS services…" /> : <label>1. Choose service
-              <input type="search" value={otherServiceSearch} onChange={e => setOtherServiceSearch(e.target.value)} placeholder="Search all SocioSMS services…" />
-              <select value={otherService} onChange={e => { setOtherService(e.target.value); setOtherCountry(''); setOtherCountries([]); setOtherServer(''); setOtherServers([]); }} disabled={otherServicesLoading}>
-                <option value="">Choose service</option>
-                {otherServices.filter(s => String(s.name || s.id).toLowerCase().includes(otherServiceSearch.toLowerCase())).map(s => <option key={s.id || s.name} value={s.id || s.name}>{s.name || s.id}</option>)}
-              </select>
-            </label>}
+            {otherServicesLoading && !otherServices.length ? <Spinner label="Fetching SocioSMS services…" /> : <SearchableChoice label="1. Choose service" value={otherService} placeholder="Choose service" searchPlaceholder="Search all services…" options={otherServices.map(s => ({ value: String(s.id || s.name), label: String(s.name || s.id) }))} onChange={value => { setOtherService(value); setOtherCountry(''); setOtherCountries([]); setOtherServer(''); setOtherServers([]); setCountrySearch(''); }} disabled={otherServicesLoading} />}
 
-            {otherService && (otherServicesLoading ? <Spinner label="Fetching supported countries…" /> : <label>2. Choose country
-              <input type="search" value={countrySearch} onChange={e => setCountrySearch(e.target.value)} placeholder="Search available countries…" />
-              <select value={otherCountry} onChange={e => { setOtherCountry(e.target.value); setOtherServer(''); setOtherServers([]); }} disabled={!otherCountries.length}>
-                <option value="">Choose country</option>
-                {otherCountries.filter(c => String(c.country_name || c.name || c.country_code || c.code).toLowerCase().includes(countrySearch.toLowerCase())).map(c => <option key={c.country_code || c.code} value={c.country_code || c.code}>{c.flag || ''} {c.country_name || c.name || c.country_code || c.code} · {Number(c.stock || 0)} in stock</option>)}
-              </select>
-            </label>)}
+            {otherService && (otherServicesLoading ? <Spinner label="Fetching supported countries…" /> : <SearchableChoice label="2. Choose country" value={otherCountry} placeholder="Choose country" searchPlaceholder="Search countries…" options={otherCountries.map(c => ({ value: String(c.country_code || c.code), label: `${c.flag || ''} ${c.country_name || c.name || c.country_code || c.code}${c.stock != null ? ` · ${Number(c.stock)} in stock` : ''}`.trim() }))} onChange={value => { setOtherCountry(value); setOtherServer(''); setOtherServers([]); }} disabled={!otherCountries.length} />)}
 
             {otherCountry && otherService && (serversLoading ? <Spinner label="Fetching servers and prices…" /> : otherServers.length > 0 ? <label>3. Choose server
               <input type="search" value={otherServerSearch} onChange={e => setOtherServerSearch(e.target.value)} placeholder="Search servers…" />
@@ -477,6 +499,7 @@ export default function NumberServicesPage() {
       </div>
 
       <style>{`
+        .fx-search-choice{position:relative;display:block;margin-top:18px;color:#647796;font-size:14px;font-weight:700;z-index:5}.fx-choice-label{display:block;margin-bottom:7px}.fx-choice-trigger{width:100%;min-height:54px;padding:0 16px;border:1px solid #dce6f5;border-radius:14px;background:#fff;color:#18345f;display:flex;align-items:center;justify-content:space-between;text-align:left;font-size:16px;font-weight:700}.fx-choice-trigger:disabled{opacity:.6;cursor:wait}.fx-choice-trigger .is-placeholder{color:#8a9ab3;font-weight:500}.fx-choice-chevron{font-size:23px;line-height:1;color:#18345f}.fx-choice-menu{position:absolute;top:calc(100% + 7px);left:0;right:0;z-index:30;padding:10px;background:#fff;border:1px solid #dce6f5;border-radius:16px;box-shadow:0 16px 40px #18345f26;max-height: min(390px,65vh);display:flex;flex-direction:column}.fx-choice-search{width:100%;height:46px;flex:0 0 auto;margin:0 0 8px;padding:0 13px;border:1px solid #dce6f5;border-radius:11px;background:#f7f9ff;color:#18345f;font-size:15px;outline:none}.fx-choice-search:focus{border-color:#245fe5}.fx-choice-options{overflow-y:auto;min-height:0}.fx-choice-option{width:100%;min-height:44px;padding:10px 12px;border:0;border-radius:9px;background:#fff;color:#18345f;display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;font-size:15px;font-weight:600}.fx-choice-option:hover,.fx-choice-option.active{background:#edf3ff;color:#245fe5}.fx-choice-empty{padding:15px 12px;color:#8290a8;font-size:14px;font-weight:500}
         *{box-sizing:border-box}.fx-page{min-height:100vh;background:#050505;color:#fff;padding:18px 0 70px;font-family:inherit}.fx-wrap{width:min(940px,100%);margin:auto;padding:0 18px}.fx-top{display:flex;justify-content:space-between;align-items:center;gap:12px}.fx-back,.fx-wallet,.fx-notice button{border:0;background:transparent;color:#aaa}.fx-back{font-size:16px;padding:10px 0}.fx-wallet{background:#111;border:1px solid #292929;border-radius:999px;padding:10px 14px;color:#fff;font-weight:800}.fx-header{padding:28px 0 18px}.fx-eyebrow{font-size:11px;letter-spacing:.16em;font-weight:900;color:#777}.fx-header h1{font-size:clamp(40px,8vw,64px);line-height:1;letter-spacing:-.055em;margin:9px 0}.fx-header p,.fx-muted{color:#888;margin:0;line-height:1.55}.fx-notice{margin:12px 0;padding:13px 15px;border:1px solid #303030;border-radius:13px;background:#111;display:flex;justify-content:space-between;gap:12px;font-size:14px}.fx-notice button{font-size:22px;padding:0;cursor:pointer}.fx-tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin:12px 0 14px}.fx-tab{min-height:68px;border:1px solid #292929;border-radius:15px;background:#0d0d0d;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:12px;cursor:pointer}.fx-tab span{font-size:19px}.fx-tab.active{background:#fff;color:#050505;border-color:#fff}.fx-card{border:1px solid #292929;border-radius:20px;background:#0b0b0b;padding:20px}.fx-card h2{font-size:24px;margin:0 0 7px;letter-spacing:-.02em}.fx-card label{display:block;margin-top:18px;color:#aaa;font-size:14px;font-weight:700}.fx-card select,.fx-card input{display:block;width:100%;height:52px;margin-top:7px;padding:0 14px;border:1px solid #333;border-radius:13px;background:#151515;color:#fff;font-size:16px;outline:none}.fx-card select:focus,.fx-card input:focus{border-color:#777}.fx-loading{display:flex;align-items:center;gap:10px;margin-top:15px;padding:14px 15px;border:1px solid #292929;border-radius:13px;background:#101010;color:#aaa}.fx-spinner{width:17px;height:17px;border:2px solid #3b3b3b;border-top-color:#fff;border-radius:50%;display:inline-block;animation:fxspin .75s linear infinite;flex:0 0 auto}.fx-hint,.fx-empty{margin-top:14px;padding:13px 14px;border-radius:12px;background:#111;border:1px solid #292929;color:#777;font-size:14px;line-height:1.45}.fx-price{margin-top:16px;padding:17px;border-radius:14px;background:#151515;border:1px solid #292929;display:flex;flex-direction:column;gap:3px}.fx-price small{color:#999;font-weight:800;letter-spacing:.08em}.fx-price strong{font-size:29px;letter-spacing:-.03em}.fx-price span{color:#777;font-size:13px}.fx-price-large{margin-top:18px}.fx-primary{width:100%;min-height:52px;margin-top:17px;border:0;border-radius:13px;background:#fff;color:#050505;font-size:15px;font-weight:900;padding:12px 15px;cursor:pointer}.fx-primary:disabled{opacity:.42;cursor:not-allowed}.fx-list{display:grid;gap:9px;margin-top:15px}.fx-row{padding:13px;border:1px solid #292929;border-radius:12px;display:flex;justify-content:space-between;gap:10px}.fx-product{padding:15px;border:1px solid #292929;border-radius:14px;display:grid;gap:8px}.fx-product span{color:#777;font-size:14px;line-height:1.45}.fx-orders{margin-top:22px}.fx-refresh{border:1px solid #333;background:#151515;color:#fff;border-radius:10px;padding:9px 12px;font-size:12px;font-weight:800;cursor:pointer}.fx-refresh:disabled{opacity:.5}.fx-code{margin-top:8px;padding:10px 12px;border-radius:10px;background:#13251b;color:#9df0b4;font-size:16px;overflow-wrap:anywhere}.fx-order{margin-top:8px;padding:12px;border:1px solid #292929;border-radius:12px;background:#0b0b0b;color:#aaa;font-size:13px}@keyframes fxspin{to{transform:rotate(360deg)}}@media(max-width:760px){.fx-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.fx-tab:last-child{grid-column:auto}.fx-card{padding:17px}.fx-header{padding-top:22px}.fx-header h1{font-size:43px}}
       `}</style>
     </main>
