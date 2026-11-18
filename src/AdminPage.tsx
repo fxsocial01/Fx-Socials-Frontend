@@ -1,70 +1,28 @@
 import { useEffect, useState } from 'react';
-
-const API = (import.meta as any).env.VITE_API_BASE_URL || 'https://fx-socials-api.onrender.com';
-const ADMIN = 'yasiyrshehu@gmail.com';
-const token = () => localStorage.getItem('fxs-session') || '';
-const money = (n: any) => `₦${Number(n || 0).toLocaleString('en-NG')}`;
-async function api(path: string, body: any = {}) {
-  const response = await fetch(`${API}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, sessionToken: token() }),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
-  return data;
+const API=(import.meta as any).env.VITE_API_BASE_URL||'https://fx-socials-api.onrender.com';
+const ADMIN='yasiyrshehu@gmail.com';const token=()=>localStorage.getItem('fxs-session')||'';
+const money=(n:any)=>`₦${Number(n||0).toLocaleString('en-NG',{maximumFractionDigits:2})}`;
+async function api(path:string,body:any={}){const r=await fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,sessionToken:token()})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
+const platforms=['Instagram','TikTok','Facebook','YouTube','X'],kinds=['Followers','Likes','Views','Comments','Shares','Subscribers','Watch time','Other'],qualities=['low','medium','premium'];
+export default function AdminPage(){
+ const [tab,setTab]=useState('overview'),[data,setData]=useState<any>({stats:{},users:[],payments:[],catalog:[],orders:[],reports:[]}),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+ const [platform,setPlatform]=useState('Instagram'),[kind,setKind]=useState('Followers');
+ const load=async()=>{setBusy(true);try{const [stats,users,payments,catalog,orders,reports]=await Promise.all([api('/api/admin/stats'),api('/api/admin/users'),api('/api/admin/manual-topups'),api('/api/admin/smm/catalog',{},'GET'),api('/api/admin/smm/orders',{},'GET'),api('/api/admin/smm/reports',{},'GET')]);setData({stats:stats.stats||{},users:users.users||[],payments:payments.requests||[],catalog:catalog.catalog||[],orders:orders.orders||[],reports:reports.reports||[]})}catch(e:any){setMessage(e.message||'Could not load admin data.')}finally{setBusy(false)}};
+ useEffect(()=>{void load()},[]);
+ const act=async(path:string,body:any={})=>{setBusy(true);setMessage('');try{const d=await api(path,body);setMessage(d.message||'Saved successfully.');await load()}catch(e:any){setMessage(e.message||'Action failed.')}finally{setBusy(false)}};
+ const editPrice=async(item:any)=>{const price=prompt(`Set price per 1,000 for ${item.platform} ${item.serviceType} (${item.quality}) in NGN:`,String(item.pricePer1000||''));if(price===null)return;const min=prompt('Minimum quantity:',String(item.min||1));if(min===null)return;const max=prompt('Maximum quantity:',String(item.max||1000000));if(max===null)return;await act('/api/admin/smm/catalog',{...item,pricePer1000:Number(price),min:Number(min),max:Number(max),active:true})};
+ const stats=data.stats||{};
+ return <main style={s.page}><header style={s.header}><div><small>FX SOCIALS ADMIN</small><h1 style={s.title}>Admin Dashboard</h1><p style={s.muted}>Manage customers, wallet activity and your in-house social boosting desk.</p><small>Authorized admin: {ADMIN}</small></div><button style={s.button} disabled={busy} onClick={()=>void load()}>{busy?'Working…':'Refresh'}</button></header>
+ {message&&<div style={s.notice}>{message}<button style={s.close} onClick={()=>setMessage('')}>×</button></div>}
+ <nav style={s.tabs}>{['overview','users','payments','boosting orders','pricing','requests & reports'].map(x=><button key={x} onClick={()=>setTab(x)} style={tab===x?s.activeTab:s.tab}>{x}</button>)}</nav>
+ {tab==='overview'&&<section><div style={s.statsGrid}>{[['Customers',stats.users],['Successful payments',stats.payments],['Boost orders',data.orders.length],['Open reports',data.reports.filter((r:any)=>r.status==='open').length]].map(([l,v])=><div style={s.card} key={String(l)}><small>{l}</small><strong style={s.stat}>{v??0}</strong></div>)}</div><div style={s.card}><h2>Social boosting workflow</h2><p style={s.muted}>Set prices for Low, Medium and Premium quality, review new orders, process speed-up requests, approve or reject cancellation requests, and mark completed orders.</p></div></section>}
+ {tab==='users'&&<section style={s.card}><h2>Customers</h2>{data.users.map((u:any)=><div style={s.row} key={u.userId||u.id}><div><b>{u.name}</b><span style={s.sub}>{u.email} · Wallet: {money(u.balance)}</span></div><div style={s.actions}><button style={s.small} onClick={()=>{const v=prompt('Amount to add (₦)');if(v)void act('/api/admin/users/add-funds',{userId:u.userId,amountNaira:Number(v)})}}>Add funds</button><button style={s.small} onClick={()=>{const v=prompt('Refund amount (₦)');if(v)void act('/api/admin/users/refund',{userId:u.userId,amountNaira:Number(v)})}}>Refund</button></div></div>)}</section>}
+ {tab==='payments'&&<section style={s.card}><h2>Manual wallet payments</h2>{data.payments.map((p:any)=><div style={s.listing} key={p.id}><div style={s.listingInfo}><b>{p.requestNumber||p.id}</b><span>{p.name||''} · {p.email||''}</span><span>{money(p.amount)} · {p.status}</span>{p.account&&<span>{p.account.bankName} · {p.account.accountName} · {p.account.accountNumber}</span>}</div><div style={s.actions}>{['submitted','expired'].includes(String(p.status))&&<><button style={s.button} onClick={()=>void act('/api/admin/manual-topups/approve',{requestId:p.id})}>Approve</button><button style={s.danger} onClick={()=>void act('/api/admin/manual-topups/reject',{requestId:p.id})}>Decline</button></>}</div></div>)}</section>}
+ {tab==='pricing'&&<section style={s.card}><h2>Boosting price manager</h2><p style={s.muted}>Every platform and service has three quality tiers. Enter prices per 1,000 in naira; only active offers appear to customers.</p><div style={s.filters}><select value={platform} onChange={e=>setPlatform(e.target.value)}>{platforms.map(x=><option key={x}>{x}</option>)}</select><select value={kind} onChange={e=>setKind(e.target.value)}>{kinds.map(x=><option key={x}>{x}</option>)}</select></div>{qualities.map(q=>{const item=data.catalog.find((x:any)=>x.platform===platform&&x.serviceType===kind&&x.quality===q);return <div key={q} style={s.listing}><div style={s.listingInfo}><b>{q.toUpperCase()} QUALITY</b><span>{item?.name||platform+' '+kind}</span><span>Current price: {money(item?.pricePer1000)} / 1,000 · {item?.active?'Active':'Inactive'}</span></div><button style={s.button} disabled={!item||busy} onClick={()=>item&&void editPrice(item)}>Set price</button></div>})}</section>}
+ {tab==='boosting orders'&&<section style={s.card}><h2>All customer boost orders</h2>{data.orders.length?data.orders.map((o:any)=><div key={o.id} style={s.listing}><div style={s.listingInfo}><b>{o.orderNumber} · {o.platform} {o.serviceType}</b><span>{o.customerName} · {o.customerEmail}</span><span>{o.quality} · Qty {Number(o.quantity).toLocaleString()} · {money(o.amount)}</span><span>Target: {o.link}</span><span>Status: <b>{o.status}</b></span></div><div style={s.actions}><button style={s.small} disabled={busy||o.status==='completed'} onClick={()=>void act(`/api/admin/smm/orders/${o.id}/status`,{status:'processing'})}>Processing</button><button style={s.button} disabled={busy||o.status==='completed'} onClick={()=>void act(`/api/admin/smm/orders/${o.id}/status`,{status:'completed'})}>Mark completed</button></div></div>):<p style={s.muted}>No boost orders yet.</p>}</section>}
+ {tab==='requests & reports'&&<section><div style={s.card}><h2>Speed-up requests</h2>{data.orders.filter((o:any)=>o.speedUpStatus==='requested').map((o:any)=><div style={s.listing} key={o.id}><div style={s.listingInfo}><b>{o.orderNumber} · {o.customerEmail}</b><span>{o.platform} {o.serviceType} · {o.quality}</span></div><div style={s.actions}><button style={s.button} onClick={()=>void act(`/api/admin/smm/orders/${o.id}/speed-up-decision`,{decision:'accepted'})}>Accept</button><button style={s.danger} onClick={()=>void act(`/api/admin/smm/orders/${o.id}/speed-up-decision`,{decision:'rejected'})}>Reject</button></div></div>)}{!data.orders.some((o:any)=>o.speedUpStatus==='requested')&&<p style={s.muted}>No pending speed-up requests.</p>}</div>
+ <div style={s.card}><h2>Cancellation requests</h2>{data.orders.filter((o:any)=>o.cancelRequestStatus==='requested').map((o:any)=><div style={s.listing} key={o.id}><div style={s.listingInfo}><b>{o.orderNumber} · {o.customerEmail}</b><span>{o.platform} {o.serviceType} · {money(o.amount)}</span><span>{o.cancelReason}</span></div><div style={s.actions}><button style={s.button} onClick={()=>void act(`/api/admin/smm/orders/${o.id}/cancel-decision`,{decision:'approve'})}>Approve + refund</button><button style={s.danger} onClick={()=>void act(`/api/admin/smm/orders/${o.id}/cancel-decision`,{decision:'reject'})}>Reject</button></div></div>)}{!data.orders.some((o:any)=>o.cancelRequestStatus==='requested')&&<p style={s.muted}>No pending cancellation requests.</p>}</div>
+ <div style={s.card}><h2>Customer reports</h2>{data.reports.length?data.reports.map((r:any)=><div style={s.listing} key={r.id}><div style={s.listingInfo}><b>{r.orderId} · {r.customerEmail}</b><span>{r.message}</span><span>Status: {r.status}</span>{r.adminReply&&<span>Reply: {r.adminReply}</span>}</div>{r.status==='open'&&<button style={s.button} onClick={()=>{const reply=prompt('Write a reply to this customer:');if(reply)void act(`/api/admin/smm/reports/${r.id}/reply`,{reply})}}>Reply / resolve</button>}</div>):<p style={s.muted}>No reports received.</p>}</div></section>}
+ </main>
 }
-export default function AdminPage() {
-  const [tab, setTab] = useState('overview');
-  const [data, setData] = useState<any>({ stats: {}, users: [], payments: [] });
-  const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState(false);
-  const load = async () => {
-    setBusy(true); setMessage('');
-    try {
-      const [stats, users, payments] = await Promise.all([
-        api('/api/admin/stats'), api('/api/admin/users'), api('/api/admin/manual-topups'),
-      ]);
-      setData({ stats: stats.stats || {}, users: users.users || [], payments: payments.requests || [] });
-    } catch (error: any) { setMessage(error?.message || 'Could not load admin data.'); }
-    finally { setBusy(false); }
-  };
-  useEffect(() => { void load(); }, []);
-  const act = async (path: string, body: any = {}) => {
-    setBusy(true); setMessage('');
-    try { await api(path, body); setMessage('Action completed successfully.'); await load(); }
-    catch (error: any) { setMessage(error?.message || 'Request failed.'); }
-    finally { setBusy(false); }
-  };
-  const stats = data.stats || {};
-  return <main style={styles.page}>
-    <div style={styles.header}><div><small>FX SOCIALS ADMIN</small><h1 style={styles.title}>Admin Dashboard</h1><p style={styles.muted}>Customers, wallet activity and manual payment approvals.</p><small>Authorized admin: {ADMIN}</small></div><button style={styles.button} disabled={busy} onClick={() => void load()}>{busy ? 'Working…' : 'Refresh'}</button></div>
-    {message && <div style={styles.notice}>{message}<button style={styles.close} onClick={() => setMessage('')}>×</button></div>}
-    <nav style={styles.tabs}>{['overview', 'users', 'payments'].map(item => <button key={item} onClick={() => setTab(item)} style={tab === item ? styles.activeTab : styles.tab}>{item}</button>)}</nav>
-    {tab === 'overview' && <section><div style={styles.statsGrid}>{[['Customers', stats.users], ['Successful payments', stats.payments]].map(([label, value]) => <div style={styles.card} key={String(label)}><small>{label}</small><strong style={styles.stat}>{value ?? 0}</strong></div>)}</div><div style={styles.card}><h2>FX Socials services</h2><p style={styles.muted}>Digital subscriptions, phone numbers, eSIMs and social media growth services.</p></div></section>}
-    {tab === 'users' && <section style={styles.card}><h2>Customers</h2>{data.users.length ? data.users.map((u: any) => <div style={styles.row} key={u.userId || u.id}><div><b>{u.name}</b><span style={styles.sub}>{u.email} · {u.role} · Wallet: {money(u.balance)}</span></div><div style={styles.actions}><button style={styles.small} onClick={() => { const value = prompt('Amount to add (₦)'); if (value) void act('/api/admin/users/add-funds', { userId: u.userId, amountNaira: Number(value) }); }}>Add funds</button><button style={styles.small} onClick={() => { const value = prompt('Refund amount (₦)'); if (value) void act('/api/admin/users/refund', { userId: u.userId, amountNaira: Number(value) }); }}>Refund</button></div></div>) : <p style={styles.muted}>No customers yet.</p>}</section>}
-    {tab === 'payments' && <section style={styles.card}><h2>Manual wallet payments</h2>{data.payments.length ? data.payments.map((p: any) => <div style={styles.listing} key={p.id}><div style={styles.listingInfo}><b>{p.requestNumber || p.id}</b><span>{p.name || ''} · {p.email || ''}</span><span>Amount: {money(p.amount)} · {p.status}</span>{p.account && <span>Bank: {p.account.bankName} · {p.account.accountName} · {p.account.accountNumber}</span>}</div><div style={styles.actions}>{['submitted', 'expired'].includes(String(p.status)) && <><button style={styles.button} onClick={() => void act('/api/admin/manual-topups/approve', { requestId: p.id })}>Approve</button><button style={styles.danger} onClick={() => void act('/api/admin/manual-topups/reject', { requestId: p.id })}>Decline</button></>}</div></div>) : <p style={styles.muted}>No manual top-up requests.</p>}</section>}
-  </main>;
-}
-const styles: any = {
- page:{minHeight:'100vh',background:'#050505',color:'#fff',maxWidth:1120,margin:'0 auto',padding:'28px 18px 90px'},
- header:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:18},
- title:{fontSize:'clamp(40px,8vw,68px)',margin:'10px 0',lineHeight:1},
- muted:{color:'#888',lineHeight:1.5},
- notice:{margin:'16px 0',padding:14,borderRadius:14,background:'#fff',color:'#111',fontWeight:700},
- close:{float:'right',border:0,background:'transparent',fontSize:20},
- tabs:{display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:8,margin:'20px 0'},
- tab:{background:'#111',color:'#aaa',border:'1px solid #292929',borderRadius:12,padding:'12px 8px',textTransform:'capitalize'},
- activeTab:{background:'#fff',color:'#000',border:'1px solid #fff',borderRadius:12,padding:'12px 8px',textTransform:'capitalize'},
- statsGrid:{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:12},
- card:{background:'#0b0b0b',border:'1px solid #252525',borderRadius:18,padding:20,marginBottom:14},
- stat:{display:'block',fontSize:34,marginTop:8},
- button:{background:'#fff',color:'#000',border:0,borderRadius:12,padding:'12px 16px',fontWeight:900},
- danger:{background:'#1b0d0d',color:'#ffb0b0',border:'1px solid #522525',borderRadius:10,padding:'10px 12px',fontWeight:800},
- small:{background:'#151515',color:'#fff',border:'1px solid #333',borderRadius:9,padding:'8px 10px'},
- row:{display:'flex',justifyContent:'space-between',alignItems:'center',gap:14,padding:'15px 0',borderBottom:'1px solid #222'},
- sub:{display:'block',color:'#888',fontSize:12,marginTop:5},
- listing:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:20,padding:'18px 0',borderBottom:'1px solid #222'},
- listingInfo:{display:'grid',gap:5},
- actions:{display:'flex',gap:8,flexWrap:'wrap'}
-};
+const s:any={page:{minHeight:'100vh',background:'#050505',color:'#fff',maxWidth:1120,margin:'0 auto',padding:'28px 18px 90px'},header:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:18},title:{fontSize:'clamp(40px,8vw,68px)',margin:'10px 0',lineHeight:1},muted:{color:'#888',lineHeight:1.5},notice:{margin:'16px 0',padding:14,borderRadius:14,background:'#fff',color:'#111',fontWeight:700},close:{float:'right',border:0,background:'transparent',fontSize:20},tabs:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8,margin:'20px 0'},tab:{background:'#111',color:'#aaa',border:'1px solid #292929',borderRadius:12,padding:'12px 8px',textTransform:'capitalize'},activeTab:{background:'#fff',color:'#000',border:'1px solid #fff',borderRadius:12,padding:'12px 8px',textTransform:'capitalize'},statsGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12},card:{background:'#0b0b0b',border:'1px solid #252525',borderRadius:18,padding:20,marginBottom:14},stat:{display:'block',fontSize:34,marginTop:8},button:{background:'#fff',color:'#000',border:0,borderRadius:12,padding:'12px 16px',fontWeight:900},danger:{background:'#1b0d0d',color:'#ffb0b0',border:'1px solid #522525',borderRadius:10,padding:'10px 12px',fontWeight:800},small:{background:'#151515',color:'#fff',border:'1px solid #333',borderRadius:9,padding:'8px 10px'},row:{display:'flex',justifyContent:'space-between',alignItems:'center',gap:14,padding:'15px 0',borderBottom:'1px solid #222'},sub:{display:'block',color:'#888',fontSize:12,marginTop:5},listing:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:20,padding:'18px 0',borderBottom:'1px solid #222',flexWrap:'wrap'},listingInfo:{display:'grid',gap:5,minWidth:0,overflowWrap:'anywhere'},actions:{display:'flex',gap:8,flexWrap:'wrap'},filters:{display:'flex',gap:10,flexWrap:'wrap',margin:'15px 0'},};
