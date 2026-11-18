@@ -25,7 +25,6 @@ const tiers=[
  {id:'low',name:'Low Quality',hint:'Lowest price'},
  {id:'medium',name:'Medium Quality',hint:'Balanced choice'},
  {id:'premium',name:'Premium Quality',hint:'Top quality option'},
- {id:'non_drop',name:'Non-Drop',hint:'Designed to reduce follower or engagement loss'}
 ];
 const panel:any={background:'linear-gradient(145deg,#121d40,#0c1530)',border:'1px solid #293762',borderRadius:18,padding:14,boxShadow:'0 12px 30px #02071944'};
 const btn:any={border:0,borderRadius:15,padding:'15px 18px',background:'linear-gradient(90deg,#637dff,#8b69f6)',color:'#fff',fontWeight:900,fontSize:15,width:'100%',minHeight:54};
