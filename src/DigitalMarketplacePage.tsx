@@ -28,7 +28,7 @@ export default function DigitalMarketplacePage(){
  <div style={b.summary}><span>{selected.category==='vpn'?money(selected.monthly_price)+' × '+months+' month(s)':'Fixed product price'}</span><strong>{money(price(selected))}</strong></div>
  <p style={{fontSize:13,color:'#68758C',lineHeight:1.5}}>After you tap Buy now, the amount will be deducted from your main wallet. Your order will move to Processing. Fulfilment may take up to 24 hours.</p>
  <div style={b.balance}>Available main wallet: <b>{money(wallet)}</b></div>
- <button disabled={busy||wallet<price(selected)} onClick={()=>void buy()} style={{...b.buy,width:'100%',marginTop:14,opacity:busy||wallet<price(selected)?.55:1}}>{busy?'Placing order…':wallet<price(selected)?'Insufficient wallet balance':'Buy now · '+money(price(selected))}</button>
+ <button disabled={busy||wallet<price(selected)} onClick={()=>void buy()} style={{...b.buy,width:'100%',marginTop:14,opacity:(busy||wallet<price(selected))?0.55:1}}>{busy?'Placing order…':wallet<price(selected)?'Insufficient wallet balance':'Buy now · '+money(price(selected))}</button>
  </section></div>}
  </main>
 }
