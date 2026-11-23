@@ -57,3 +57,9 @@ section:not(.fx-home-hero) button,article button{background:var(--fx-primary)!im
 section:not(.fx-home-hero) button:hover,article button:hover{background:var(--fx-primary-dark)!important}
 section:not(.fx-home-hero) input,section:not(.fx-home-hero) select,article input,article select{background:#fff!important;color:var(--fx-ink)!important;border-color:var(--fx-line)!important}
 .fx-home-hero{background:linear-gradient(115deg,#7C3AED 0%,#A855F7 52%,#EC4899 100%)!important}
+
+/* FX Socials mobile refresh: simple sky-blue primary, clean neutral surfaces */
+:root{--fx-primary:#3979E8;--fx-primary-dark:#2563C8;--fx-ink:#334155;--fx-muted:#8290A5;--fx-line:#E6EAF2;--fx-surface:#fff;--fx-page:#F7FAFF}
+html,body,#root{background:var(--fx-page)!important;color:var(--fx-ink)!important}
+body{background:linear-gradient(180deg,#F7FAFF 0%,#FFFFFF 65%,#F5FBFF 100%)!important}
+.fx-home-hero{background:linear-gradient(135deg,#3B82F6,#75B7FF)!important}
