@@ -26,7 +26,8 @@ export default function AppFixed(){
  useEffect(()=>{const h=()=>setPage(location.hash.replace('#/','').split('?')[0]||'home');addEventListener('hashchange',h);void load();return()=>removeEventListener('hashchange',h)},[]);
  useEffect(()=>{if(!logged)return;const i=setInterval(load,8000);return()=>clearInterval(i)},[logged]);
  const logout=()=>{localStorage.removeItem('fxs-session');localStorage.removeItem('fxs-user');setUser(null);setWallet(0);go('home')};
- if(page==='api')return <ApiKeysPage/>;\n if(page==='subscriptions')return <SubscriptionsPage/>;
+ if(page==='api')return <ApiKeysPage/>;
+ if(page==='subscriptions')return <SubscriptionsPage/>;
  if(page==='digital')return <DigitalMarketplacePage/>;
  if(page==='referrals')return <ReferralPage/>;
  if(page==='services')return <UnifiedServicesPage/>;
